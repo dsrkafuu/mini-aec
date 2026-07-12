@@ -8,6 +8,9 @@ application shell. Audio-engine development will start with a Windows proof of
 concept that records a physical microphone, a WASAPI render-loopback reference,
 and processed output for comparison.
 
+See [docs/technical-plan.md](docs/technical-plan.md) for the architecture,
+validation plan, delivery phases, and engineering constraints.
+
 ## Development
 
 ```bash
