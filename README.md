@@ -25,3 +25,20 @@ bun run format:check
 bun run lint
 bun run build
 ```
+
+Inspect the Windows audio endpoints and their shared-mode formats with:
+
+```powershell
+cargo run -p denoise-lab -- devices
+```
+
+Record a timestamped microphone and render-loopback diagnostic run with:
+
+```powershell
+cargo run -p denoise-lab -- capture --duration 30 --microphone "<physical microphone name or endpoint ID>" --render "<physical speaker name or endpoint ID>"
+```
+
+Capture artifacts are written below `artifacts/runs/` and are ignored by Git.
+When a virtual microphone such as Krisp is the Windows default, select the
+physical microphone explicitly to avoid measuring another processor instead of
+the raw device.
