@@ -42,3 +42,30 @@ Capture artifacts are written below `artifacts/runs/` and are ignored by Git.
 When a virtual microphone such as Krisp is the Windows default, select the
 physical microphone explicitly to avoid measuring another processor instead of
 the raw device.
+
+Align a captured run using its WASAPI/QPC timestamps and process it through
+WebRTC AEC3 with automatic delay estimation:
+
+```powershell
+cargo run -p denoise-lab -- aec --run artifacts/runs/<run-id>
+```
+
+To compare against a known acoustic-delay hint, add (for example)
+`--stream-delay-ms 60`. Each mode writes aligned source tracks,
+`aec-output.wav`, and `aec-report.json` below the run's `processed/` directory.
+
+### Bundled WebRTC build on Windows
+
+The repository pins and patches `webrtc-audio-processing-sys` so its bundled
+WebRTC AEC3 source can build with MSVC. Build from an x64 Visual Studio Developer
+PowerShell with the C++ build tools installed. The native build also requires:
+
+- Python with `meson`, `ninja`, and `libclang` packages available.
+- `LIBCLANG_PATH` pointing to the directory containing `libclang.dll` when it
+  cannot be discovered automatically.
+
+The first AEC build compiles the bundled WebRTC C++ sources and is substantially
+slower than subsequent Cargo builds.
+
+See [docs/aec-baseline.md](docs/aec-baseline.md) for the current offline
+validation result and remaining acceptance tests.

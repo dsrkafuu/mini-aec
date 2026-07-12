@@ -1,3 +1,4 @@
+mod offline;
 mod platform;
 
 use std::path::PathBuf;
@@ -24,6 +25,8 @@ enum Command {
   },
   /// Capture a physical microphone and render-loopback reference together.
   Capture(CaptureArgs),
+  /// Align a diagnostic run by QPC timestamp and process it through WebRTC AEC3.
+  Aec(AecArgs),
 }
 
 #[derive(Debug, Args)]
@@ -45,6 +48,21 @@ struct CaptureArgs {
   render: Option<String>,
 }
 
+#[derive(Debug, Args)]
+struct AecArgs {
+  /// Diagnostic run directory containing manifest.json and both source WAV files.
+  #[arg(long)]
+  run: PathBuf,
+
+  /// Optional fixed acoustic stream-delay hint. Omit to use AEC3 delay estimation.
+  #[arg(long)]
+  stream_delay_ms: Option<u16>,
+
+  /// Render level above which frames count toward active echo-reduction metrics.
+  #[arg(long, default_value_t = -50.0)]
+  active_threshold_dbfs: f64,
+}
+
 fn main() -> Result<()> {
   let cli = Cli::parse();
 
@@ -55,6 +73,11 @@ fn main() -> Result<()> {
       output_root: args.output,
       microphone_selector: args.microphone,
       render_selector: args.render,
+    }),
+    Command::Aec(args) => offline::process(&offline::AecConfig {
+      run_dir: args.run,
+      stream_delay_ms: args.stream_delay_ms,
+      active_threshold_dbfs: args.active_threshold_dbfs,
     }),
   }
 }

@@ -13,3 +13,6 @@ unsafe_code = "deny"
 [workspace.lints.clippy]
 all = "warn"
 pedantic = "warn"
+
+[patch.crates-io]
+webrtc-audio-processing-sys = { path = "vendor/webrtc-audio-processing-sys" }

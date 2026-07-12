@@ -12,6 +12,7 @@ dist
 dist-ssr
 /target
 artifacts/
+.tools/
 *.local
 
 # Editor directories and files
