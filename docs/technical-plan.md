@@ -153,6 +153,10 @@ NS 必须放在 AEC 后。先对麦克风执行强降噪会改变回声结构，
 
 AEC3 详细参数只有在基线数据证明默认参数不足时才调整。实验参数、依赖版本和录音场景必须一起记录。
 
+当前 AEC3 上游版本、来源链和本地补丁以
+[`vendor/UPSTREAM.md`](../vendor/UPSTREAM.md) 为准。WebRTC 不是滚动依赖；任何版本更新必须遵循
+[`docs/upstream-upgrade-plan.md`](upstream-upgrade-plan.md)，使用相同输入完成旧版/候选版回归后才能替换基线。
+
 ### 5.2 普通降噪
 
 在 AEC 基线通过后按以下顺序比较：
@@ -368,37 +372,21 @@ artifacts/runs/<timestamp>/
 
 ## 13. 当前最值得先做的验证
 
-下一步只实现 M1，不直接做 UI、驱动或神经网络：
+M1 双路 WASAPI 采集与 M2 离线 QPC 对齐/AEC3 基线已经完成。当前 far-end-only
+录音证明参考流可用、AEC3 能收敛，并在目标硬件上估计出稳定的声学延迟；结果见
+[`docs/aec-baseline.md`](aec-baseline.md)。
 
-```text
-physical microphone ─┐
-                     ├─> timestamped bounded buffers ─> synchronized diagnostic WAV files
-WASAPI loopback ─────┘
-```
+下一关是受控双讲：播放相同 far-end 语音，同时在开头、中段和末段以日常音量对 K7
+说话，并在首次说话前保留数秒 far-end-only 内容供 AEC3 收敛。重点判断：
 
-建议依赖 spike：
+1. 本地语音是否吞字、出现抽吸或金属音。
+2. 双讲期间远端回声是否仍有足够抑制。
+3. 双讲结束后 AEC3 是否快速恢复。
+4. 最大录制增益与日常增益的行为是否一致。
 
-- `wasapi`：Windows capture 和 loopback。
-- `hound`：WAV 输出。
-- `clap`：CLI 参数。
-- `serde` / `serde_json`：manifest 和事件。
-- `crossbeam-channel` 或项目内有界 SPSC：首轮诊断 writer 通道，实时化前再以 profiler 验证。
-
-M1 首个命令目标：
-
-```powershell
-cargo run -p denoise-lab -- devices
-cargo run -p denoise-lab -- capture --duration 30 --output artifacts/runs
-```
-
-第一轮必须先回答四个问题：
-
-1. 当前机器的麦克风和默认播放设备分别报告什么 mix format？
-2. `wasapi` crate 能否稳定同时获取 microphone 与 loopback？
-3. 两路回调的时间戳、包大小和 discontinuity 实际表现如何？
-4. 30 秒和 10 分钟录音是否存在 drift，程度是多少？
-
-得到数据后再集成 AEC3，避免把采集和同步问题误判成算法问题。
+双讲通过后，录制至少 30 分钟，测量 K7 与 Sound Blaster X4 的时钟漂移、延迟变化和
+discontinuity，再决定异步重采样控制器的设计。完成这两项后才进入实时 10 ms 管线；此时
+仍不引入独立 NS、AGC、虚拟驱动或 WebRTC 上游升级，以保持变量隔离。
 
 ## 14. 主要风险与应对
 

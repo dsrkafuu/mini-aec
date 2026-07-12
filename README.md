@@ -11,6 +11,10 @@ and processed output for comparison.
 See [docs/technical-plan.md](docs/technical-plan.md) for the architecture,
 validation plan, delivery phases, and engineering constraints.
 
+AEC source pins and local patches are recorded in
+[vendor/UPSTREAM.md](vendor/UPSTREAM.md). Future WebRTC upgrades must follow
+[docs/upstream-upgrade-plan.md](docs/upstream-upgrade-plan.md).
+
 ## Development
 
 ```bash

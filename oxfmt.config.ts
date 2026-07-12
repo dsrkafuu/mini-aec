@@ -1,7 +1,7 @@
 import { defineConfig } from 'oxfmt';
 
 export default defineConfig({
-  ignorePatterns: ['vendor/**'],
+  ignorePatterns: ['vendor/webrtc-audio-processing-sys/**'],
   singleQuote: true,
   jsxSingleQuote: true,
   sortImports: true,
