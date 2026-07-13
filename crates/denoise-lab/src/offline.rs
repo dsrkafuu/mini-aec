@@ -25,6 +25,10 @@ pub enum AecProfile {
   NearendStable,
   /// Slow gain drops and allow faster recovery while near-end speech is present.
   SpeechSafe,
+  /// Change only the near-end gain increase limit to allow faster recovery.
+  RecoveryFast,
+  /// Change only the low-frequency gain decrease limit to soften gain drops.
+  DropSmooth,
 }
 
 pub struct AecConfig {
@@ -37,6 +41,7 @@ pub struct AecConfig {
 pub struct BlindAecConfig {
   pub run_dir: PathBuf,
   pub segments: Vec<String>,
+  pub profiles: Vec<AecProfile>,
   pub active_threshold_dbfs: f64,
 }
 
@@ -259,11 +264,7 @@ pub fn build_blind_experiment(config: &BlindAecConfig) -> Result<()> {
     .map(|value| parse_segment(value))
     .collect::<Result<Vec<_>>>()?;
 
-  let profiles = [
-    AecProfile::Default,
-    AecProfile::NearendStable,
-    AecProfile::SpeechSafe,
-  ];
+  let profiles = selected_blind_profiles(&config.profiles)?;
   let mut outputs = Vec::with_capacity(profiles.len());
   for profile in profiles {
     let output = process_internal(&AecConfig {
@@ -286,7 +287,7 @@ pub fn build_blind_experiment(config: &BlindAecConfig) -> Result<()> {
   fs::create_dir_all(&experiment_dir)
     .with_context(|| format!("failed to create {}", experiment_dir.display()))?;
 
-  let order = randomized_profile_order(now);
+  let order = randomized_profile_order(now, profiles);
   let mut assignments = BTreeMap::new();
   let mut files = Vec::with_capacity(order.len());
   for (index, profile) in order.iter().enumerate() {
@@ -363,6 +364,12 @@ fn create_processor(profile: AecProfile) -> Result<Processor> {
       tuning.max_inc_factor = 4.0;
       tuning.max_dec_factor_lf = 0.5;
     }
+    AecProfile::RecoveryFast => {
+      aec3_config.suppressor.nearend_tuning.max_inc_factor = 4.0;
+    }
+    AecProfile::DropSmooth => {
+      aec3_config.suppressor.nearend_tuning.max_dec_factor_lf = 0.5;
+    }
   }
   if !aec3_config.validate() {
     bail!("AEC3 rejected the {profile:?} profile");
@@ -423,12 +430,28 @@ fn seconds_to_samples(seconds: f64) -> Result<usize> {
   usize::try_from(samples).context("segment time exceeds addressable audio length")
 }
 
-fn randomized_profile_order(now: Duration) -> [AecProfile; 3] {
-  let mut order = [
-    AecProfile::Default,
-    AecProfile::NearendStable,
-    AecProfile::SpeechSafe,
-  ];
+fn selected_blind_profiles(requested: &[AecProfile]) -> Result<[AecProfile; 3]> {
+  let profiles = if requested.is_empty() {
+    vec![
+      AecProfile::Default,
+      AecProfile::NearendStable,
+      AecProfile::SpeechSafe,
+    ]
+  } else {
+    requested.to_vec()
+  };
+  if profiles.len() != 3 {
+    bail!("blind AEC experiments require exactly three profiles");
+  }
+  if profiles[0] == profiles[1] || profiles[0] == profiles[2] || profiles[1] == profiles[2] {
+    bail!("blind AEC experiment profiles must be unique");
+  }
+  profiles
+    .try_into()
+    .map_err(|_| anyhow::anyhow!("validated profile count did not fit A/B/C"))
+}
+
+fn randomized_profile_order(now: Duration, mut order: [AecProfile; 3]) -> [AecProfile; 3] {
   let rotation = usize::try_from(now.as_nanos() % 3).expect("rotation is below three");
   order.rotate_left(rotation);
   if (now.as_nanos() / 3) % 2 == 1 {
@@ -568,6 +591,8 @@ fn output_directory(run_dir: &Path, stream_delay_ms: Option<u16>, profile: AecPr
       AecProfile::Default => "aec-adaptive".to_owned(),
       AecProfile::NearendStable => "aec-nearend-stable".to_owned(),
       AecProfile::SpeechSafe => "aec-speech-safe".to_owned(),
+      AecProfile::RecoveryFast => "aec-recovery-fast".to_owned(),
+      AecProfile::DropSmooth => "aec-drop-smooth".to_owned(),
     },
     |delay| format!("aec-delay-{delay}ms"),
   );
@@ -731,5 +756,41 @@ mod tests {
     assert_eq!(aligned.microphone_offset_samples, 480);
     assert!((aligned.microphone[480] - 1.0).abs() < f32::EPSILON);
     assert!((aligned.render[0] - 2.0).abs() < f32::EPSILON);
+  }
+
+  #[test]
+  fn blind_profiles_default_to_the_original_experiment() {
+    assert_eq!(
+      selected_blind_profiles(&[]).unwrap(),
+      [
+        AecProfile::Default,
+        AecProfile::NearendStable,
+        AecProfile::SpeechSafe,
+      ]
+    );
+  }
+
+  #[test]
+  fn blind_profiles_require_three_unique_candidates() {
+    assert!(selected_blind_profiles(&[AecProfile::Default, AecProfile::RecoveryFast]).is_err());
+    assert!(selected_blind_profiles(&[
+      AecProfile::Default,
+      AecProfile::RecoveryFast,
+      AecProfile::RecoveryFast,
+    ])
+    .is_err());
+    assert_eq!(
+      selected_blind_profiles(&[
+        AecProfile::Default,
+        AecProfile::RecoveryFast,
+        AecProfile::DropSmooth,
+      ])
+      .unwrap(),
+      [
+        AecProfile::Default,
+        AecProfile::RecoveryFast,
+        AecProfile::DropSmooth,
+      ]
+    );
   }
 }

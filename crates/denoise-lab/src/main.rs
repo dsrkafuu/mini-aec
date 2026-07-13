@@ -79,6 +79,10 @@ struct BlindAecArgs {
   #[arg(long, required = true)]
   segment: Vec<String>,
 
+  /// AEC profile to include. Repeat exactly three times; omit for the original profile set.
+  #[arg(long, value_enum)]
+  profile: Vec<offline::AecProfile>,
+
   /// Render level above which frames count toward active echo-reduction metrics.
   #[arg(long, default_value_t = -50.0)]
   active_threshold_dbfs: f64,
@@ -104,6 +108,7 @@ fn main() -> Result<()> {
     Command::BlindAec(args) => offline::build_blind_experiment(&offline::BlindAecConfig {
       run_dir: args.run,
       segments: args.segment,
+      profiles: args.profile,
       active_threshold_dbfs: args.active_threshold_dbfs,
     }),
   }

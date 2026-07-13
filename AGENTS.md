@@ -16,8 +16,11 @@ Before changing audio capture, synchronization, AEC, dependencies, or validation
 - M2 QPC-aligned offline WebRTC AEC3 is complete.
 - The current AEC baseline is FreeDesktop `webrtc-audio-processing 2.1`, based on
   WebRTC M131, through Rust `webrtc-audio-processing 2.1.0`.
-- The next validation gate is controlled double-talk, followed by a longer run
-  that measures microphone/render clock drift.
+- Controlled double-talk proves far-end removal but still exposes near-end
+  swallowing and pumping. The active gate is the second anonymous A/B/C profile
+  experiment recorded in `docs/aec-baseline.md`.
+- After double-talk voice preservation passes, run a longer capture that
+  measures microphone/render clock drift.
 
 ## AEC dependency rules
 

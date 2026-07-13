@@ -88,7 +88,7 @@ score: preserved near-end speech should dominate the output during those
 intervals. The listening gate is residual far-end speech, intelligibility,
 word-tail preservation, level stability, and recovery after speech.
 
-## Anonymous profile experiment
+## Anonymous profile experiment: round 1
 
 The next experiment keeps the frozen default as one candidate and adds two
 single-mechanism diagnostic profiles:
@@ -129,13 +129,52 @@ The candidates retain the far-end echo result closely enough for blind
 listening. Acceptance still requires a subjective improvement without audible
 video speech returning.
 
+The revealed listening result was `speech-safe > default > nearend-stable`.
+`speech-safe` and the default were difficult to distinguish, while
+`nearend-stable` caused clearly worse swallowed speech. This rejects the
+earlier/longer dominant-near-end state direction. The combined `speech-safe`
+change is not yet a meaningful win, but it is the only direction worth
+decomposing.
+
+## Anonymous profile experiment: round 2
+
+Round 2 uses the same source recording and splits `speech-safe` into two
+strictly single-variable profiles:
+
+- `recovery-fast` changes only near-end `max_inc_factor` from 2.0 to 4.0.
+- `drop-smooth` changes only near-end `max_dec_factor_lf` from 0.25 to 0.5.
+
+The default remains the third candidate. Generate this exact round with:
+
+```powershell
+cargo run -p denoise-lab -- blind-aec `
+  --run artifacts/runs/<run-id> `
+  --segment 7-13 --segment 19-26 --segment 32-38 `
+  --profile default --profile recovery-fast --profile drop-smooth
+```
+
+The blind command requires exactly three unique profiles when `--profile` is
+used. Omitting all profile arguments preserves the round 1 candidate set.
+
+Objective safety checking before listening showed:
+
+| Profile       | Far-only 13-19 s | Far-only 26-32 s |
+| ------------- | ---------------: | ---------------: |
+| Default       |         28.85 dB |         32.85 dB |
+| Recovery fast |         28.85 dB |         31.78 dB |
+| Drop smooth   |         28.85 dB |         32.71 dB |
+
+Both candidates remain eligible for blind listening. The round 2 answer key
+must remain sealed until the listener records the ranking and swallowing,
+pumping, level-stability, and returned-video-speech observations.
+
 ## Interpretation and next gate
 
 The reference signal is usable, AEC3 converges on both gain settings, timestamp
 alignment is repeatable, and the default profile removes far-end speech during
 double-talk. The current blocker is near-end speech quality.
 
-The active gate is the anonymous A/B/C comparison:
+The active gate is the round 2 anonymous A/B/C comparison:
 
 1. Rank A/B/C for voice naturalness and stable volume.
 2. For each file, note word-tail loss, pumping, and any returned video speech.
