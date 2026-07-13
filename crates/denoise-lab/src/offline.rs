@@ -1,20 +1,42 @@
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::{bail, Context, Result};
+use clap::ValueEnum;
 use hound::{SampleFormat, WavReader, WavSpec, WavWriter};
 use serde::{Deserialize, Serialize};
 use webrtc_audio_processing::config::EchoCanceller;
+use webrtc_audio_processing::experimental::EchoCanceller3Config;
 use webrtc_audio_processing::{Config, Processor, Stats};
 
 const SAMPLE_RATE: u32 = 48_000;
 const QPC_TICKS_PER_SECOND: u64 = 10_000_000;
 const FRAME_SAMPLES: usize = 480;
 
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, ValueEnum)]
+#[serde(rename_all = "kebab-case")]
+pub enum AecProfile {
+  /// Frozen WebRTC M131 defaults.
+  #[default]
+  Default,
+  /// Enter near-end mode sooner and hold it longer to reduce state pumping.
+  NearendStable,
+  /// Slow gain drops and allow faster recovery while near-end speech is present.
+  SpeechSafe,
+}
+
 pub struct AecConfig {
   pub run_dir: PathBuf,
   pub stream_delay_ms: Option<u16>,
+  pub active_threshold_dbfs: f64,
+  pub profile: AecProfile,
+}
+
+pub struct BlindAecConfig {
+  pub run_dir: PathBuf,
+  pub segments: Vec<String>,
   pub active_threshold_dbfs: f64,
 }
 
@@ -47,6 +69,7 @@ struct AecReport {
   microphone_offset_samples: usize,
   render_offset_samples: usize,
   microphone_minus_render_start_ms: f64,
+  profile: AecProfile,
   stream_delay_ms: Option<u16>,
   active_threshold_dbfs: f64,
   metrics: AecMetrics,
@@ -84,7 +107,44 @@ struct AlignedAudio {
   microphone_minus_render_start_ms: f64,
 }
 
+struct ProcessOutput {
+  output_dir: PathBuf,
+  aec_output: Vec<f32>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+struct ListeningSegment {
+  start_seconds: f64,
+  end_seconds: f64,
+}
+
+#[derive(Debug, Serialize)]
+struct BlindManifest {
+  schema_version: u32,
+  source_run: String,
+  experiment_id: String,
+  segments: Vec<ListeningSegment>,
+  files: Vec<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct BlindAnswerKey {
+  schema_version: u32,
+  experiment_id: String,
+  assignments: BTreeMap<String, BlindAssignment>,
+}
+
+#[derive(Debug, Serialize)]
+struct BlindAssignment {
+  profile: AecProfile,
+  source_report: String,
+}
+
 pub fn process(config: &AecConfig) -> Result<()> {
+  process_internal(config).map(|_| ())
+}
+
+fn process_internal(config: &AecConfig) -> Result<ProcessOutput> {
   if !config.active_threshold_dbfs.is_finite() {
     bail!("active threshold must be finite");
   }
@@ -108,7 +168,7 @@ pub fn process(config: &AecConfig) -> Result<()> {
   let microphone_qpc = required_qpc(microphone_track, "microphone")?;
   let render_qpc = required_qpc(render_track, "render-reference")?;
   let aligned = align_tracks(&microphone[0], &render, microphone_qpc, render_qpc);
-  let output_dir = output_directory(&config.run_dir, config.stream_delay_ms);
+  let output_dir = output_directory(&config.run_dir, config.stream_delay_ms, config.profile);
   fs::create_dir_all(&output_dir)
     .with_context(|| format!("failed to create {}", output_dir.display()))?;
 
@@ -121,7 +181,7 @@ pub fn process(config: &AecConfig) -> Result<()> {
     &aligned.render,
   )?;
 
-  let processor = Processor::new(SAMPLE_RATE).context("failed to create WebRTC processor")?;
+  let processor = create_processor(config.profile)?;
   processor.set_config(Config {
     echo_canceller: Some(EchoCanceller::Full {
       stream_delay_ms: config.stream_delay_ms,
@@ -149,6 +209,7 @@ pub fn process(config: &AecConfig) -> Result<()> {
     microphone_offset_samples: aligned.microphone_offset_samples,
     render_offset_samples: aligned.render_offset_samples,
     microphone_minus_render_start_ms: aligned.microphone_minus_render_start_ms,
+    profile: config.profile,
     stream_delay_ms: config.stream_delay_ms,
     active_threshold_dbfs: config.active_threshold_dbfs,
     metrics: calculate_metrics(
@@ -164,6 +225,7 @@ pub fn process(config: &AecConfig) -> Result<()> {
   fs::write(&report_path, serde_json::to_vec_pretty(&report)?)
     .with_context(|| format!("failed to write {}", report_path.display()))?;
 
+  println!("AEC profile: {:?}", config.profile);
   println!(
     "Aligned microphone offset: {} samples",
     report.microphone_offset_samples
@@ -181,7 +243,198 @@ pub fn process(config: &AecConfig) -> Result<()> {
     output_dir.join("aec-output.wav").display()
   );
   println!("Report: {}", report_path.display());
+  Ok(ProcessOutput {
+    output_dir,
+    aec_output,
+  })
+}
+
+pub fn build_blind_experiment(config: &BlindAecConfig) -> Result<()> {
+  if !config.active_threshold_dbfs.is_finite() {
+    bail!("active threshold must be finite");
+  }
+  let segments = config
+    .segments
+    .iter()
+    .map(|value| parse_segment(value))
+    .collect::<Result<Vec<_>>>()?;
+
+  let profiles = [
+    AecProfile::Default,
+    AecProfile::NearendStable,
+    AecProfile::SpeechSafe,
+  ];
+  let mut outputs = Vec::with_capacity(profiles.len());
+  for profile in profiles {
+    let output = process_internal(&AecConfig {
+      run_dir: config.run_dir.clone(),
+      stream_delay_ms: None,
+      active_threshold_dbfs: config.active_threshold_dbfs,
+      profile,
+    })?;
+    outputs.push((profile, output));
+  }
+
+  let now = SystemTime::now()
+    .duration_since(UNIX_EPOCH)
+    .context("system clock is before the Unix epoch")?;
+  let experiment_id = now.as_nanos().to_string();
+  let experiment_dir = config
+    .run_dir
+    .join("processed")
+    .join(format!("blind-aec-{experiment_id}"));
+  fs::create_dir_all(&experiment_dir)
+    .with_context(|| format!("failed to create {}", experiment_dir.display()))?;
+
+  let order = randomized_profile_order(now);
+  let mut assignments = BTreeMap::new();
+  let mut files = Vec::with_capacity(order.len());
+  for (index, profile) in order.iter().enumerate() {
+    let label = char::from(b'A' + u8::try_from(index).expect("three labels fit u8"));
+    let file_name = format!("{label}.wav");
+    let source = outputs
+      .iter()
+      .find(|(candidate, _)| candidate == profile)
+      .expect("all blind profiles were processed");
+    let listening_audio = extract_segments(&source.1.aec_output, &segments)?;
+    write_mono_wave(&experiment_dir.join(&file_name), &listening_audio)?;
+    assignments.insert(
+      label.to_string(),
+      BlindAssignment {
+        profile: *profile,
+        source_report: source
+          .1
+          .output_dir
+          .join("aec-report.json")
+          .display()
+          .to_string(),
+      },
+    );
+    files.push(file_name);
+  }
+
+  let source_run = config.run_dir.file_name().map_or_else(
+    || config.run_dir.display().to_string(),
+    |name| name.to_string_lossy().into(),
+  );
+  let manifest = BlindManifest {
+    schema_version: 1,
+    source_run,
+    experiment_id: experiment_id.clone(),
+    segments,
+    files,
+  };
+  let manifest_path = experiment_dir.join("manifest.json");
+  fs::write(&manifest_path, serde_json::to_vec_pretty(&manifest)?)
+    .with_context(|| format!("failed to write {}", manifest_path.display()))?;
+
+  let answer_key = BlindAnswerKey {
+    schema_version: 1,
+    experiment_id: experiment_id.clone(),
+    assignments,
+  };
+  let answer_key_path = config
+    .run_dir
+    .join("processed")
+    .join(format!(".blind-aec-{experiment_id}-answer-key.json"));
+  fs::write(&answer_key_path, serde_json::to_vec_pretty(&answer_key)?)
+    .with_context(|| format!("failed to write {}", answer_key_path.display()))?;
+
+  println!("Blind listening directory: {}", experiment_dir.display());
+  println!("Listen to A.wav, B.wav, and C.wav without inspecting the answer key.");
   Ok(())
+}
+
+fn create_processor(profile: AecProfile) -> Result<Processor> {
+  if profile == AecProfile::Default {
+    return Processor::new(SAMPLE_RATE).context("failed to create WebRTC processor");
+  }
+
+  let mut aec3_config = EchoCanceller3Config::default();
+  match profile {
+    AecProfile::Default => unreachable!("default profile returned above"),
+    AecProfile::NearendStable => {
+      let detector = &mut aec3_config.suppressor.dominant_nearend_detection;
+      detector.trigger_threshold = 6;
+      detector.hold_duration = 200;
+    }
+    AecProfile::SpeechSafe => {
+      let tuning = &mut aec3_config.suppressor.nearend_tuning;
+      tuning.max_inc_factor = 4.0;
+      tuning.max_dec_factor_lf = 0.5;
+    }
+  }
+  if !aec3_config.validate() {
+    bail!("AEC3 rejected the {profile:?} profile");
+  }
+  Processor::with_aec3_config(SAMPLE_RATE, aec3_config)
+    .context("failed to create WebRTC processor with experimental AEC3 config")
+}
+
+fn parse_segment(value: &str) -> Result<ListeningSegment> {
+  let (start, end) = value
+    .split_once('-')
+    .with_context(|| format!("invalid segment {value:?}; expected START-END in seconds"))?;
+  let start_seconds = start
+    .parse::<f64>()
+    .with_context(|| format!("invalid segment start in {value:?}"))?;
+  let end_seconds = end
+    .parse::<f64>()
+    .with_context(|| format!("invalid segment end in {value:?}"))?;
+  if !start_seconds.is_finite()
+    || !end_seconds.is_finite()
+    || start_seconds < 0.0
+    || end_seconds <= start_seconds
+  {
+    bail!("invalid segment {value:?}; require finite 0 <= START < END");
+  }
+  Ok(ListeningSegment {
+    start_seconds,
+    end_seconds,
+  })
+}
+
+fn extract_segments(samples: &[f32], segments: &[ListeningSegment]) -> Result<Vec<f32>> {
+  let gap_samples = usize::try_from(SAMPLE_RATE / 4).expect("sample rate fits usize");
+  let mut output = Vec::new();
+  for (index, segment) in segments.iter().enumerate() {
+    let start = seconds_to_samples(segment.start_seconds)?;
+    let end = seconds_to_samples(segment.end_seconds)?;
+    if end > samples.len() {
+      bail!(
+        "segment {:.3}-{:.3} exceeds the processed recording",
+        segment.start_seconds,
+        segment.end_seconds
+      );
+    }
+    if index > 0 {
+      output.resize(output.len() + gap_samples, 0.0);
+    }
+    output.extend_from_slice(&samples[start..end]);
+  }
+  Ok(output)
+}
+
+fn seconds_to_samples(seconds: f64) -> Result<usize> {
+  let duration = Duration::try_from_secs_f64(seconds)
+    .with_context(|| format!("invalid non-negative time {seconds}"))?;
+  let samples = u128::from(duration.as_secs()) * u128::from(SAMPLE_RATE)
+    + u128::from(duration.subsec_nanos()) * u128::from(SAMPLE_RATE) / 1_000_000_000;
+  usize::try_from(samples).context("segment time exceeds addressable audio length")
+}
+
+fn randomized_profile_order(now: Duration) -> [AecProfile; 3] {
+  let mut order = [
+    AecProfile::Default,
+    AecProfile::NearendStable,
+    AecProfile::SpeechSafe,
+  ];
+  let rotation = usize::try_from(now.as_nanos() % 3).expect("rotation is below three");
+  order.rotate_left(rotation);
+  if (now.as_nanos() / 3) % 2 == 1 {
+    order.swap(0, 1);
+  }
+  order
 }
 
 fn read_manifest(run_dir: &Path) -> Result<CaptureManifest> {
@@ -309,9 +562,13 @@ fn qpc_delta_ms(delta: u64) -> f64 {
       / f64::from(u32::try_from(QPC_TICKS_PER_SECOND).expect("QPC frequency fits u32"))
 }
 
-fn output_directory(run_dir: &Path, stream_delay_ms: Option<u16>) -> PathBuf {
+fn output_directory(run_dir: &Path, stream_delay_ms: Option<u16>, profile: AecProfile) -> PathBuf {
   let mode = stream_delay_ms.map_or_else(
-    || "aec-adaptive".to_owned(),
+    || match profile {
+      AecProfile::Default => "aec-adaptive".to_owned(),
+      AecProfile::NearendStable => "aec-nearend-stable".to_owned(),
+      AecProfile::SpeechSafe => "aec-speech-safe".to_owned(),
+    },
     |delay| format!("aec-delay-{delay}ms"),
   );
   run_dir.join("processed").join(mode)

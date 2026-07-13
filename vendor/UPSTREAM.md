@@ -59,6 +59,11 @@ Local changes are confined to
    library syntax so the final executable retains it.
 6. Copy bundled sources with Rust `fs_extra` rather than requiring Unix `cp` on
    Windows.
+7. Define `WEBRTC_WIN` and `NOMINMAX` for the standalone C++ wrapper and
+   bindgen pass. Meson already supplies equivalent Windows configuration while
+   compiling the library, but enabling the experimental AEC3 configuration
+   makes the wrapper include internal WebRTC headers that otherwise select
+   their pthread branch and collide with the Windows `min`/`max` macros.
 
 These are build and linkage adaptations, not AEC behavior changes.
 

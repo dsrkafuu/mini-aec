@@ -386,6 +386,14 @@ fn main() -> Result<()> {
         cc_build.define("WEBRTC_AEC3_CONFIG", None);
     }
 
+    if cfg!(target_os = "windows") {
+        // WebRTC headers use their own platform macro rather than the compiler's
+        // built-in Windows macro. Meson supplies it for the library, while the
+        // standalone wrapper compilation needs to define it explicitly.
+        cc_build.define("WEBRTC_WIN", None);
+        cc_build.define("NOMINMAX", None);
+    }
+
     // Set macos minimum version
     if cfg!(target_os = "macos") {
         let min_version = match env::var(MACOSX_DEPLOYMENT_TARGET_VAR) {
@@ -464,6 +472,10 @@ fn main() -> Result<()> {
         ])
         .generate_comments(true)
         .enable_cxx_namespaces();
+
+    if cfg!(target_os = "windows") {
+        builder = builder.clang_args(["-DWEBRTC_WIN", "-DNOMINMAX"]);
+    }
 
     builder = builder
         // Transitive dependencies are automatically included.

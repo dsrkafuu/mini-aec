@@ -2,10 +2,9 @@
 
 ## Scope
 
-This baseline validates the first half of milestone M2: timestamp alignment and
-repeatable offline WebRTC AEC3 processing. It does not yet validate a real-time
-audio pipeline, clock-drift correction, double-talk preservation, or a virtual
-microphone.
+This baseline validates timestamp alignment, repeatable offline WebRTC AEC3
+processing, and the first controlled double-talk gate. It does not yet validate
+a real-time audio pipeline, clock-drift correction, or a virtual microphone.
 
 Test hardware:
 
@@ -14,9 +13,11 @@ Test hardware:
 - Format: 48 kHz microphone mono plus render-loopback stereo
 - Stimulus: the same approximately 40-second video playback for both captures
 
-Two captures are retained locally below the Git-ignored `artifacts/runs/`
-directory: one with maximum microphone recording gain and one with normal daily
-gain. No private recordings or generated WAV files are committed.
+The echo-only baseline uses two captures: one with maximum microphone recording
+gain and one with normal daily gain. A third normal-gain capture supplies the
+controlled double-talk experiment. All are retained only below the Git-ignored
+`artifacts/runs/` directory; no private recordings or generated WAV files are
+committed.
 
 ## Processing path
 
@@ -61,22 +62,86 @@ physical echo delay previously measured by waveform correlation. QPC alignment
 correctly handles either stream starting first; it removes capture-start skew,
 while AEC3 estimates the separate speaker-to-microphone acoustic path.
 
+## Controlled double-talk
+
+The first controlled double-talk run used normal daily microphone gain and this
+schedule:
+
+| Interval | Content      |
+| -------- | ------------ |
+| 0-7 s    | Far end only |
+| 7-13 s   | Double-talk  |
+| 13-19 s  | Far end only |
+| 19-26 s  | Double-talk  |
+| 26-32 s  | Far end only |
+| 32-38 s  | Double-talk  |
+| 38-40 s  | Far end only |
+
+The frozen default profile removed the video speech completely and achieved
+28.85 dB and 32.85 dB input/output reduction in the two converged far-end-only
+intervals. Subjective listening found no metallic sound, but did find audible
+word-tail loss, pumping, and near-end volume changes. Therefore far-end echo
+cancellation passes while near-end speech preservation does not.
+
+Full-recording energy reduction is intentionally not used as the double-talk
+score: preserved near-end speech should dominate the output during those
+intervals. The listening gate is residual far-end speech, intelligibility,
+word-tail preservation, level stability, and recovery after speech.
+
+## Anonymous profile experiment
+
+The next experiment keeps the frozen default as one candidate and adds two
+single-mechanism diagnostic profiles:
+
+- `nearend-stable`: changes only dominant-near-end detector timing, entering
+  after 6 AEC3 blocks and holding for 200 blocks. This tests whether rapid state
+  switching causes pumping.
+- `speech-safe`: changes only near-end suppression gain dynamics, using a 4.0
+  maximum increase factor and 0.5 low-frequency decrease factor. This tests
+  whether slower gain drops and faster recovery preserve speech.
+
+Both candidates use the same WebRTC M131 AEC3 source, QPC alignment, inputs,
+frame order, and delay estimator. AEC3 configuration validation must accept
+each profile before processing.
+
+Create a randomized A/B/C listening set from the three speech intervals with:
+
+```powershell
+cargo run -p denoise-lab -- blind-aec `
+  --run artifacts/runs/<run-id> `
+  --segment 7-13 --segment 19-26 --segment 32-38
+```
+
+The command writes only anonymous `A.wav`, `B.wav`, and `C.wav` files plus
+segment metadata into the listening directory. It stores the answer key
+separately below the ignored run's `processed/` directory. Do not inspect the
+answer key until the listener has ranked all three files.
+
+Objective safety checking on the same run showed:
+
+| Profile         | Far-only 13-19 s | Far-only 26-32 s |
+| --------------- | ---------------: | ---------------: |
+| Default         |         28.85 dB |         32.85 dB |
+| Near-end stable |         28.85 dB |         32.85 dB |
+| Speech safe     |         28.85 dB |         31.71 dB |
+
+The candidates retain the far-end echo result closely enough for blind
+listening. Acceptance still requires a subjective improvement without audible
+video speech returning.
+
 ## Interpretation and next gate
 
-This result is strong enough to proceed: the reference signal is usable, AEC3
-converges on both gain settings, and timestamp alignment is repeatable. It does
-not prove Krisp-like call quality because the current stimulus contains no
-near-end speech.
+The reference signal is usable, AEC3 converges on both gain settings, timestamp
+alignment is repeatable, and the default profile removes far-end speech during
+double-talk. The current blocker is near-end speech quality.
 
-The next highest-value recording is controlled double-talk:
+The active gate is the anonymous A/B/C comparison:
 
-1. Play the same far-end video through Sound Blaster X4.
-2. Speak at normal volume near K7 during three intervals: near the beginning,
-   middle, and end.
-3. Include several seconds of far-end-only playback before the first speech so
-   AEC3 can converge.
-4. Compare aligned microphone and AEC output for residual far-end speech,
-   near-end voice damage, pumping, and recovery after double-talk.
+1. Rank A/B/C for voice naturalness and stable volume.
+2. For each file, note word-tail loss, pumping, and any returned video speech.
+3. Reveal the answer key only after the ranking is recorded.
+4. Keep a candidate only if it improves speech subjectively and retains the
+   far-end-only safety result.
 
 After double-talk passes, run a longer capture to measure clock drift and then
 move the same framing and processor contract into the real-time pipeline.
