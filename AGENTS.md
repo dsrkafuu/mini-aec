@@ -17,8 +17,9 @@ Before changing audio capture, synchronization, AEC, dependencies, or validation
 - The current AEC baseline is FreeDesktop `webrtc-audio-processing 2.1`, based on
   WebRTC M131, through Rust `webrtc-audio-processing 2.1.0`.
 - Controlled double-talk proves far-end removal but still exposes near-end
-  swallowing and pumping. The active gate is the second anonymous A/B/C profile
-  experiment recorded in `docs/aec-baseline.md`.
+  swallowing and pumping. Round 2 identified faster near-end suppression-gain
+  recovery as the useful direction. The active gate is the round 3 anonymous
+  2/4/8 dose-response experiment recorded in `docs/aec-baseline.md`.
 - After double-talk voice preservation passes, run a longer capture that
   measures microphone/render clock drift.
 

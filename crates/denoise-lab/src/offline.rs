@@ -27,6 +27,8 @@ pub enum AecProfile {
   SpeechSafe,
   /// Change only the near-end gain increase limit to allow faster recovery.
   RecoveryFast,
+  /// Increase the near-end gain recovery limit further for dose-response testing.
+  RecoveryFaster,
   /// Change only the low-frequency gain decrease limit to soften gain drops.
   DropSmooth,
 }
@@ -367,6 +369,9 @@ fn create_processor(profile: AecProfile) -> Result<Processor> {
     AecProfile::RecoveryFast => {
       aec3_config.suppressor.nearend_tuning.max_inc_factor = 4.0;
     }
+    AecProfile::RecoveryFaster => {
+      aec3_config.suppressor.nearend_tuning.max_inc_factor = 8.0;
+    }
     AecProfile::DropSmooth => {
       aec3_config.suppressor.nearend_tuning.max_dec_factor_lf = 0.5;
     }
@@ -592,6 +597,7 @@ fn output_directory(run_dir: &Path, stream_delay_ms: Option<u16>, profile: AecPr
       AecProfile::NearendStable => "aec-nearend-stable".to_owned(),
       AecProfile::SpeechSafe => "aec-speech-safe".to_owned(),
       AecProfile::RecoveryFast => "aec-recovery-fast".to_owned(),
+      AecProfile::RecoveryFaster => "aec-recovery-faster".to_owned(),
       AecProfile::DropSmooth => "aec-drop-smooth".to_owned(),
     },
     |delay| format!("aec-delay-{delay}ms"),

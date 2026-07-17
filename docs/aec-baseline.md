@@ -168,13 +168,51 @@ Both candidates remain eligible for blind listening. The round 2 answer key
 must remain sealed until the listener records the ranking and swallowing,
 pumping, level-stability, and returned-video-speech observations.
 
+The revealed round 2 result was
+`recovery-fast > drop-smooth > default`. The default had the most severe
+swallowing, while none of the three returned meaningful video speech. This
+identifies the near-end gain increase limit, rather than the decrease limit, as
+the primary useful variable. `recovery-fast` becomes the leading candidate;
+`drop-smooth` is not combined with it because the round 1 combination was
+difficult to distinguish from the default.
+
+## Anonymous profile experiment: round 3
+
+Round 3 is a dose-response test of the winning variable using the same source:
+
+- `default`: near-end `max_inc_factor = 2.0`.
+- `recovery-fast`: near-end `max_inc_factor = 4.0`.
+- `recovery-faster`: near-end `max_inc_factor = 8.0`.
+
+Generate the round with:
+
+```powershell
+cargo run -p denoise-lab -- blind-aec `
+  --run artifacts/runs/<run-id> `
+  --segment 7-13 --segment 19-26 --segment 32-38 `
+  --profile default --profile recovery-fast --profile recovery-faster
+```
+
+Objective safety checking before listening showed:
+
+| Profile         | Far-only 13-19 s | Far-only 26-32 s |
+| --------------- | ---------------: | ---------------: |
+| Default         |         28.85 dB |         32.85 dB |
+| Recovery fast   |         28.85 dB |         31.78 dB |
+| Recovery faster |         28.85 dB |         31.36 dB |
+
+The 8.0 candidate costs another 0.42 dB in the later far-end-only interval
+relative to 4.0, but remains above 31 dB and is eligible for blind listening.
+The acceptance question is whether the additional speech preservation is
+audible without returned video speech or new pumping.
+
 ## Interpretation and next gate
 
 The reference signal is usable, AEC3 converges on both gain settings, timestamp
 alignment is repeatable, and the default profile removes far-end speech during
 double-talk. The current blocker is near-end speech quality.
 
-The active gate is the round 2 anonymous A/B/C comparison:
+The active gate is the round 3 anonymous A/B/C dose-response comparison:
 
 1. Rank A/B/C for voice naturalness and stable volume.
 2. For each file, note word-tail loss, pumping, and any returned video speech.
