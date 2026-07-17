@@ -32,6 +32,10 @@ pub enum AecProfile {
   RecoveryFaster,
   /// Change only the low-frequency gain decrease limit to soften gain drops.
   DropSmooth,
+  /// Use M131's more-transparent near-end low-frequency masking thresholds.
+  NearendLfTransparent,
+  /// Use M131's more-transparent near-end high-frequency masking thresholds.
+  NearendHfTransparent,
 }
 
 pub struct AecConfig {
@@ -448,6 +452,15 @@ fn create_processor(profile: AecProfile, export_linear: bool) -> Result<Processo
 
   let mut aec3_config = EchoCanceller3Config::default();
   aec3_config.filter.export_linear_aec_output = export_linear;
+  apply_profile(&mut aec3_config, profile);
+  if !aec3_config.validate() {
+    bail!("AEC3 rejected the {profile:?} profile");
+  }
+  Processor::with_aec3_config(SAMPLE_RATE, aec3_config)
+    .context("failed to create WebRTC processor with experimental AEC3 config")
+}
+
+fn apply_profile(aec3_config: &mut EchoCanceller3Config, profile: AecProfile) {
   match profile {
     AecProfile::Default => {}
     AecProfile::NearendStable => {
@@ -469,12 +482,17 @@ fn create_processor(profile: AecProfile, export_linear: bool) -> Result<Processo
     AecProfile::DropSmooth => {
       aec3_config.suppressor.nearend_tuning.max_dec_factor_lf = 0.5;
     }
+    AecProfile::NearendLfTransparent => {
+      let mask = &mut aec3_config.suppressor.nearend_tuning.mask_lf;
+      mask.enr_transparent = 1.29;
+      mask.enr_suppress = 1.3;
+    }
+    AecProfile::NearendHfTransparent => {
+      let mask = &mut aec3_config.suppressor.nearend_tuning.mask_hf;
+      mask.enr_transparent = 1.09;
+      mask.enr_suppress = 1.1;
+    }
   }
-  if !aec3_config.validate() {
-    bail!("AEC3 rejected the {profile:?} profile");
-  }
-  Processor::with_aec3_config(SAMPLE_RATE, aec3_config)
-    .context("failed to create WebRTC processor with experimental AEC3 config")
 }
 
 fn parse_segment(value: &str) -> Result<ListeningSegment> {
@@ -698,6 +716,8 @@ fn output_directory(
       AecProfile::RecoveryFast => "aec-recovery-fast".to_owned(),
       AecProfile::RecoveryFaster => "aec-recovery-faster".to_owned(),
       AecProfile::DropSmooth => "aec-drop-smooth".to_owned(),
+      AecProfile::NearendLfTransparent => "aec-nearend-lf-transparent".to_owned(),
+      AecProfile::NearendHfTransparent => "aec-nearend-hf-transparent".to_owned(),
     },
     |delay| format!("aec-delay-{delay}ms"),
   );
@@ -978,6 +998,66 @@ mod tests {
         AecProfile::RecoveryFast,
         AecProfile::DropSmooth,
       ]
+    );
+  }
+
+  #[test]
+  fn transparent_profiles_change_only_the_selected_nearend_mask() {
+    let baseline = EchoCanceller3Config::default();
+
+    let mut low_frequency = baseline;
+    apply_profile(&mut low_frequency, AecProfile::NearendLfTransparent);
+    assert!(
+      (low_frequency
+        .suppressor
+        .nearend_tuning
+        .mask_lf
+        .enr_transparent
+        - 1.29)
+        .abs()
+        < f32::EPSILON
+    );
+    assert!(
+      (low_frequency.suppressor.nearend_tuning.mask_lf.enr_suppress - 1.3).abs() < f32::EPSILON
+    );
+    assert_eq!(
+      low_frequency.suppressor.nearend_tuning.mask_hf,
+      baseline.suppressor.nearend_tuning.mask_hf
+    );
+    assert_eq!(
+      low_frequency.suppressor.normal_tuning,
+      baseline.suppressor.normal_tuning
+    );
+
+    let mut high_frequency = baseline;
+    apply_profile(&mut high_frequency, AecProfile::NearendHfTransparent);
+    assert!(
+      (high_frequency
+        .suppressor
+        .nearend_tuning
+        .mask_hf
+        .enr_transparent
+        - 1.09)
+        .abs()
+        < f32::EPSILON
+    );
+    assert!(
+      (high_frequency
+        .suppressor
+        .nearend_tuning
+        .mask_hf
+        .enr_suppress
+        - 1.1)
+        .abs()
+        < f32::EPSILON
+    );
+    assert_eq!(
+      high_frequency.suppressor.nearend_tuning.mask_lf,
+      baseline.suppressor.nearend_tuning.mask_lf
+    );
+    assert_eq!(
+      high_frequency.suppressor.normal_tuning,
+      baseline.suppressor.normal_tuning
     );
   }
 }

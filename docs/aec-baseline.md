@@ -239,21 +239,65 @@ in the two converged far-end-only intervals. Across the three double-talk
 intervals it was only 0.71-0.98 dB lower overall; listening is still required
 because brief word-tail suppression can be hidden by interval RMS.
 
+Subjective comparison found that the linear output preserved near-end speech
+and word tails noticeably better than the complete output. However, it returned
+clearly intelligible video speech and had poor overall audio quality, making it
+unusable as a product output. This isolates the near-end damage primarily to
+the residual echo suppressor while also proving that the suppressor cannot be
+removed or replaced by a fixed blend with the linear signal.
+
+## Anonymous profile experiment: round 4
+
+Round 4 changes the residual suppressor's near-end masking thresholds, not its
+gain recovery speed. The two candidates reproduce single-frequency portions of
+M131's own more-transparent near-end field-trial settings:
+
+- `nearend-lf-transparent` changes only low-frequency near-end ENR thresholds
+  from `1.09 / 1.10` to `1.29 / 1.30`.
+- `nearend-hf-transparent` changes only high-frequency near-end ENR thresholds
+  from `0.10 / 0.30` to `1.09 / 1.10`.
+
+Both leave `normal_tuning`, detector settings, filter settings, delay handling,
+and every other AEC3 parameter at the frozen default. Generate the anonymous
+set with:
+
+```powershell
+cargo run -p denoise-lab -- blind-aec `
+  --run artifacts/runs/<run-id> `
+  --segment 7-13 --segment 19-26 --segment 32-38 `
+  --profile default `
+  --profile nearend-lf-transparent `
+  --profile nearend-hf-transparent
+```
+
+Objective safety checking before listening showed:
+
+| Profile                 | Far-only 13-19 s | Far-only 26-32 s |
+| ----------------------- | ---------------: | ---------------: |
+| Default                 |         28.85 dB |         32.85 dB |
+| Near-end LF transparent |         28.85 dB |         32.79 dB |
+| Near-end HF transparent |         28.85 dB |         30.89 dB |
+
+The LF candidate is objectively equivalent to the baseline in these intervals.
+The HF candidate remains above 30 dB but loses 1.96 dB in the later interval,
+so any identifiable returned video speech rejects it even if near-end word
+tails improve.
+
 ## Interpretation and next gate
 
 The reference signal is usable, AEC3 converges on both gain settings, timestamp
 alignment is repeatable, and the default profile removes far-end speech during
 double-talk. The current blocker is near-end speech quality.
 
-The active gate is the linear/full mechanism-isolation comparison:
+The active gate is the round 4 anonymous A/B/C comparison:
 
-1. Compare the same double-talk intervals in the two 16 kHz files.
-2. Note which file preserves word tails, avoids pumping, and keeps near-end
-   volume stable.
-3. Separately note whether the linear output returns audible video speech.
-4. If linear preserves near-end speech better, investigate residual echo
-   suppressor controls. If it does not, investigate the linear canceller,
-   double-talk detection, and alignment before any more suppressor tuning.
+1. Rank A/B/C for near-end naturalness and word-tail preservation.
+2. Record pumping and volume stability for each file.
+3. Reject any candidate with identifiable returned video speech, paying
+   particular attention to the HF candidate's objective regression.
+4. Reveal the answer key only after the observations are recorded. If neither
+   transparent candidate improves the trade-off, instrument the near-end state
+   selection before changing any more suppressor parameters.
 
 After double-talk passes, run a longer capture to measure clock drift and then
 move the same framing and processor contract into the real-time pipeline.
