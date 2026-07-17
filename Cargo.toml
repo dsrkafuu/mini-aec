@@ -15,4 +15,5 @@ all = "warn"
 pedantic = "warn"
 
 [patch.crates-io]
+webrtc-audio-processing = { path = "vendor/webrtc-audio-processing" }
 webrtc-audio-processing-sys = { path = "vendor/webrtc-audio-processing-sys" }

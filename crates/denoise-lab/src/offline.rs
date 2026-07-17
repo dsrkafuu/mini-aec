@@ -9,9 +9,10 @@ use hound::{SampleFormat, WavReader, WavSpec, WavWriter};
 use serde::{Deserialize, Serialize};
 use webrtc_audio_processing::config::EchoCanceller;
 use webrtc_audio_processing::experimental::EchoCanceller3Config;
-use webrtc_audio_processing::{Config, Processor, Stats};
+use webrtc_audio_processing::{Config, Processor, Stats, LINEAR_AEC_OUTPUT_SAMPLES};
 
 const SAMPLE_RATE: u32 = 48_000;
+const LINEAR_SAMPLE_RATE: u32 = 16_000;
 const QPC_TICKS_PER_SECOND: u64 = 10_000_000;
 const FRAME_SAMPLES: usize = 480;
 
@@ -38,6 +39,7 @@ pub struct AecConfig {
   pub stream_delay_ms: Option<u16>,
   pub active_threshold_dbfs: f64,
   pub profile: AecProfile,
+  pub export_linear: bool,
 }
 
 pub struct BlindAecConfig {
@@ -82,6 +84,17 @@ struct AecReport {
   metrics: AecMetrics,
   active_frame_stats: Option<AecStats>,
   final_stats: AecStats,
+  linear_output: Option<LinearOutputReport>,
+}
+
+#[derive(Debug, Serialize)]
+struct LinearOutputReport {
+  sample_rate: u32,
+  frame_samples: usize,
+  frames_available: usize,
+  frames_missing: usize,
+  output_file: String,
+  comparison_output_file: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -117,6 +130,14 @@ struct AlignedAudio {
 struct ProcessOutput {
   output_dir: PathBuf,
   aec_output: Vec<f32>,
+}
+
+struct AecRunOutput {
+  aec_output: Vec<f32>,
+  linear_output: Option<Vec<f32>>,
+  linear_frames_available: usize,
+  linear_frames_missing: usize,
+  active_frame_stats: Option<AecStats>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -175,7 +196,12 @@ fn process_internal(config: &AecConfig) -> Result<ProcessOutput> {
   let microphone_qpc = required_qpc(microphone_track, "microphone")?;
   let render_qpc = required_qpc(render_track, "render-reference")?;
   let aligned = align_tracks(&microphone[0], &render, microphone_qpc, render_qpc);
-  let output_dir = output_directory(&config.run_dir, config.stream_delay_ms, config.profile);
+  let output_dir = output_directory(
+    &config.run_dir,
+    config.stream_delay_ms,
+    config.profile,
+    config.export_linear,
+  );
   fs::create_dir_all(&output_dir)
     .with_context(|| format!("failed to create {}", output_dir.display()))?;
 
@@ -188,20 +214,36 @@ fn process_internal(config: &AecConfig) -> Result<ProcessOutput> {
     &aligned.render,
   )?;
 
-  let processor = create_processor(config.profile)?;
+  let processor = create_processor(config.profile, config.export_linear)?;
   processor.set_config(Config {
     echo_canceller: Some(EchoCanceller::Full {
       stream_delay_ms: config.stream_delay_ms,
     }),
     ..Config::default()
   });
-  let (aec_output, active_frame_stats) = run_aec(
+  let run_output = run_aec(
     &processor,
     &aligned.microphone,
     &aligned.render,
     config.active_threshold_dbfs,
+    config.export_linear,
   )?;
+  let AecRunOutput {
+    aec_output,
+    linear_output,
+    linear_frames_available,
+    linear_frames_missing,
+    active_frame_stats,
+  } = run_output;
   write_mono_wave(&output_dir.join("aec-output.wav"), &aec_output)?;
+
+  let linear_output_report = write_linear_diagnostic(
+    &output_dir,
+    &aec_output,
+    linear_output.as_deref(),
+    linear_frames_available,
+    linear_frames_missing,
+  )?;
 
   let report = AecReport {
     schema_version: 1,
@@ -227,12 +269,21 @@ fn process_internal(config: &AecConfig) -> Result<ProcessOutput> {
     ),
     active_frame_stats,
     final_stats: processor.get_stats().into(),
+    linear_output: linear_output_report,
   };
   let report_path = output_dir.join("aec-report.json");
   fs::write(&report_path, serde_json::to_vec_pretty(&report)?)
     .with_context(|| format!("failed to write {}", report_path.display()))?;
 
-  println!("AEC profile: {:?}", config.profile);
+  print_report_summary(&report, &output_dir, &report_path);
+  Ok(ProcessOutput {
+    output_dir,
+    aec_output,
+  })
+}
+
+fn print_report_summary(report: &AecReport, output_dir: &Path, report_path: &Path) {
+  println!("AEC profile: {:?}", report.profile);
   println!(
     "Aligned microphone offset: {} samples",
     report.microphone_offset_samples
@@ -249,11 +300,52 @@ fn process_internal(config: &AecConfig) -> Result<ProcessOutput> {
     "AEC output: {}",
     output_dir.join("aec-output.wav").display()
   );
+  if let Some(linear) = &report.linear_output {
+    println!(
+      "Linear AEC output: {} ({} available, {} missing frames)",
+      output_dir.join(&linear.output_file).display(),
+      linear.frames_available,
+      linear.frames_missing
+    );
+    println!(
+      "16 kHz full AEC comparison: {}",
+      output_dir.join(&linear.comparison_output_file).display()
+    );
+  }
   println!("Report: {}", report_path.display());
-  Ok(ProcessOutput {
-    output_dir,
-    aec_output,
-  })
+}
+
+fn write_linear_diagnostic(
+  output_dir: &Path,
+  fullband_output: &[f32],
+  linear_output: Option<&[f32]>,
+  frames_available: usize,
+  frames_missing: usize,
+) -> Result<Option<LinearOutputReport>> {
+  let Some(linear_output) = linear_output else {
+    return Ok(None);
+  };
+
+  let linear_file = "linear-aec-output-16khz.wav";
+  let comparison_file = "full-aec-output-16khz.wav";
+  write_mono_wave_at_rate(
+    &output_dir.join(linear_file),
+    linear_output,
+    LINEAR_SAMPLE_RATE,
+  )?;
+  write_mono_wave_at_rate(
+    &output_dir.join(comparison_file),
+    &downsample_48_to_16(fullband_output),
+    LINEAR_SAMPLE_RATE,
+  )?;
+  Ok(Some(LinearOutputReport {
+    sample_rate: LINEAR_SAMPLE_RATE,
+    frame_samples: LINEAR_AEC_OUTPUT_SAMPLES,
+    frames_available,
+    frames_missing,
+    output_file: linear_file.to_owned(),
+    comparison_output_file: comparison_file.to_owned(),
+  }))
 }
 
 pub fn build_blind_experiment(config: &BlindAecConfig) -> Result<()> {
@@ -274,6 +366,7 @@ pub fn build_blind_experiment(config: &BlindAecConfig) -> Result<()> {
       stream_delay_ms: None,
       active_threshold_dbfs: config.active_threshold_dbfs,
       profile,
+      export_linear: false,
     })?;
     outputs.push((profile, output));
   }
@@ -348,14 +441,15 @@ pub fn build_blind_experiment(config: &BlindAecConfig) -> Result<()> {
   Ok(())
 }
 
-fn create_processor(profile: AecProfile) -> Result<Processor> {
-  if profile == AecProfile::Default {
+fn create_processor(profile: AecProfile, export_linear: bool) -> Result<Processor> {
+  if profile == AecProfile::Default && !export_linear {
     return Processor::new(SAMPLE_RATE).context("failed to create WebRTC processor");
   }
 
   let mut aec3_config = EchoCanceller3Config::default();
+  aec3_config.filter.export_linear_aec_output = export_linear;
   match profile {
-    AecProfile::Default => unreachable!("default profile returned above"),
+    AecProfile::Default => {}
     AecProfile::NearendStable => {
       let detector = &mut aec3_config.suppressor.dominant_nearend_detection;
       detector.trigger_threshold = 6;
@@ -590,8 +684,13 @@ fn qpc_delta_ms(delta: u64) -> f64 {
       / f64::from(u32::try_from(QPC_TICKS_PER_SECOND).expect("QPC frequency fits u32"))
 }
 
-fn output_directory(run_dir: &Path, stream_delay_ms: Option<u16>, profile: AecProfile) -> PathBuf {
-  let mode = stream_delay_ms.map_or_else(
+fn output_directory(
+  run_dir: &Path,
+  stream_delay_ms: Option<u16>,
+  profile: AecProfile,
+  export_linear: bool,
+) -> PathBuf {
+  let mut mode = stream_delay_ms.map_or_else(
     || match profile {
       AecProfile::Default => "aec-adaptive".to_owned(),
       AecProfile::NearendStable => "aec-nearend-stable".to_owned(),
@@ -602,6 +701,9 @@ fn output_directory(run_dir: &Path, stream_delay_ms: Option<u16>, profile: AecPr
     },
     |delay| format!("aec-delay-{delay}ms"),
   );
+  if export_linear {
+    mode.push_str("-linear");
+  }
   run_dir.join("processed").join(mode)
 }
 
@@ -610,9 +712,14 @@ fn run_aec(
   microphone: &[f32],
   render: &[f32],
   active_threshold_dbfs: f64,
-) -> Result<(Vec<f32>, Option<AecStats>)> {
+  export_linear: bool,
+) -> Result<AecRunOutput> {
   let threshold_power = 10_f64.powf(active_threshold_dbfs / 10.0);
   let mut output = Vec::with_capacity(microphone.len());
+  let mut linear_output = export_linear
+    .then(|| Vec::with_capacity(microphone.len() / (FRAME_SAMPLES / LINEAR_AEC_OUTPUT_SAMPLES)));
+  let mut linear_frames_available = 0;
+  let mut linear_frames_missing = 0;
   let mut active_stats = None;
 
   for (microphone_frame, render_frame) in microphone
@@ -630,11 +737,27 @@ fn run_aec(
       .context("WebRTC failed to process capture frame")?;
     output.extend_from_slice(&capture_channels[0]);
 
+    if let Some(linear_output) = &mut linear_output {
+      if let Some(linear_frame) = processor.get_linear_aec_output() {
+        linear_output.extend_from_slice(&linear_frame);
+        linear_frames_available += 1;
+      } else {
+        linear_output.resize(linear_output.len() + LINEAR_AEC_OUTPUT_SAMPLES, 0.0);
+        linear_frames_missing += 1;
+      }
+    }
+
     if mean_power(render_frame) > threshold_power {
       active_stats = Some(processor.get_stats().into());
     }
   }
-  Ok((output, active_stats))
+  Ok(AecRunOutput {
+    aec_output: output,
+    linear_output,
+    linear_frames_available,
+    linear_frames_missing,
+    active_frame_stats: active_stats,
+  })
 }
 
 fn calculate_metrics(
@@ -711,11 +834,15 @@ fn reduction_db(input_energy: f64, output_energy: f64) -> f64 {
 }
 
 fn write_mono_wave(path: &Path, samples: &[f32]) -> Result<()> {
+  write_mono_wave_at_rate(path, samples, SAMPLE_RATE)
+}
+
+fn write_mono_wave_at_rate(path: &Path, samples: &[f32], sample_rate: u32) -> Result<()> {
   let mut writer = WavWriter::create(
     path,
     WavSpec {
       channels: 1,
-      sample_rate: SAMPLE_RATE,
+      sample_rate,
       bits_per_sample: 32,
       sample_format: SampleFormat::Float,
     },
@@ -727,6 +854,49 @@ fn write_mono_wave(path: &Path, samples: &[f32]) -> Result<()> {
   writer
     .finalize()
     .with_context(|| format!("failed to finalize {}", path.display()))
+}
+
+fn downsample_48_to_16(samples: &[f32]) -> Vec<f32> {
+  const DECIMATION: usize = 3;
+  const FILTER_TAPS: usize = 63;
+  const FILTER_HALF: usize = FILTER_TAPS / 2;
+  const NORMALIZED_CUTOFF: f32 = 7_200.0 / 48_000.0;
+
+  let mut taps = [0.0; FILTER_TAPS];
+  for (index, tap) in taps.iter_mut().enumerate() {
+    let index = u16::try_from(index).expect("FIR tap index fits u16");
+    let half = u16::try_from(FILTER_HALF).expect("FIR half length fits u16");
+    let offset = f32::from(index) - f32::from(half);
+    let sinc = if offset.abs() < f32::EPSILON {
+      2.0 * NORMALIZED_CUTOFF
+    } else {
+      (2.0 * std::f32::consts::PI * NORMALIZED_CUTOFF * offset).sin()
+        / (std::f32::consts::PI * offset)
+    };
+    let window = 0.54 + 0.46 * (std::f32::consts::PI * offset / f32::from(half)).cos();
+    *tap = sinc * window;
+  }
+  let tap_sum: f32 = taps.iter().sum();
+  for tap in &mut taps {
+    *tap /= tap_sum;
+  }
+
+  let mut output = Vec::with_capacity(samples.len() / DECIMATION);
+  for output_index in 0..(samples.len() / DECIMATION) {
+    let center = output_index * DECIMATION;
+    let mut sample = 0.0;
+    for (tap_index, tap) in taps.iter().enumerate() {
+      let shifted_index = center + tap_index;
+      if shifted_index >= FILTER_HALF {
+        let source_index = shifted_index - FILTER_HALF;
+        if let Some(source_sample) = samples.get(source_index) {
+          sample += source_sample * tap;
+        }
+      }
+    }
+    output.push(sample);
+  }
+  output
 }
 
 impl From<Stats> for AecStats {
@@ -744,6 +914,17 @@ impl From<Stats> for AecStats {
 #[cfg(test)]
 mod tests {
   use super::*;
+
+  #[test]
+  fn downsampling_preserves_length_and_steady_dc_level() {
+    let input = vec![1.0; FRAME_SAMPLES];
+    let output = downsample_48_to_16(&input);
+
+    assert_eq!(output.len(), LINEAR_AEC_OUTPUT_SAMPLES);
+    for sample in &output[16..(output.len() - 16)] {
+      assert!((sample - 1.0).abs() < 1e-5);
+    }
+  }
 
   #[test]
   fn qpc_delta_rounds_to_nearest_sample() {

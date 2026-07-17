@@ -18,8 +18,11 @@ Before changing audio capture, synchronization, AEC, dependencies, or validation
   WebRTC M131, through Rust `webrtc-audio-processing 2.1.0`.
 - Controlled double-talk proves far-end removal but still exposes near-end
   swallowing and pumping. Round 2 identified faster near-end suppression-gain
-  recovery as the useful direction. The active gate is the round 3 anonymous
-  2/4/8 dose-response experiment recorded in `docs/aec-baseline.md`.
+  recovery as a possible direction, but the round 3 anonymous 2/4/8
+  dose-response was not audibly distinguishable. Parameter tuning is paused.
+  The active gate compares exported linear AEC output with the complete AEC3
+  output to isolate adaptive-filter behavior from residual echo suppression;
+  see `docs/aec-baseline.md`.
 - After double-talk voice preservation passes, run a longer capture that
   measures microphone/render clock drift.
 

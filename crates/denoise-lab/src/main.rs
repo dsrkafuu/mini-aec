@@ -64,6 +64,10 @@ struct AecArgs {
   #[arg(long, default_value_t = -50.0)]
   active_threshold_dbfs: f64,
 
+  /// Export WebRTC's 16 kHz linear AEC signal for mechanism-isolation diagnostics.
+  #[arg(long)]
+  export_linear: bool,
+
   /// AEC3 tuning profile. The default profile is the frozen baseline.
   #[arg(long, value_enum, default_value_t)]
   profile: offline::AecProfile,
@@ -104,6 +108,7 @@ fn main() -> Result<()> {
       stream_delay_ms: args.stream_delay_ms,
       active_threshold_dbfs: args.active_threshold_dbfs,
       profile: args.profile,
+      export_linear: args.export_linear,
     }),
     Command::BlindAec(args) => offline::build_blind_experiment(&offline::BlindAecConfig {
       run_dir: args.run,

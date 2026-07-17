@@ -58,11 +58,23 @@ To compare against a known acoustic-delay hint, add (for example)
 `--stream-delay-ms 60`. Each mode writes aligned source tracks,
 `aec-output.wav`, and `aec-report.json` below the run's `processed/` directory.
 
+For mechanism-isolation diagnostics, export WebRTC's pre-suppressor linear AEC
+signal alongside the complete AEC output:
+
+```powershell
+cargo run -p denoise-lab -- aec --run artifacts/runs/<run-id> --export-linear
+```
+
+This additionally writes `linear-aec-output-16khz.wav` and a sample-rate-matched
+`full-aec-output-16khz.wav`. Linear export is opt-in and does not enable noise
+suppression or change the ordinary frozen baseline path.
+
 ### Bundled WebRTC build on Windows
 
-The repository pins and patches `webrtc-audio-processing-sys` so its bundled
-WebRTC AEC3 source can build with MSVC. Build from an x64 Visual Studio Developer
-PowerShell with the C++ build tools installed. The native build also requires:
+The repository pins and patches `webrtc-audio-processing` and its `-sys` crate
+so the diagnostic API and bundled WebRTC AEC3 source build reproducibly with
+MSVC. Build from an x64 Visual Studio Developer PowerShell with the C++ build
+tools installed. The native build also requires:
 
 - Python with `meson`, `ninja`, and `libclang` packages available.
 - `LIBCLANG_PATH` pointing to the directory containing `libclang.dll` when it

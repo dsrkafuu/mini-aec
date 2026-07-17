@@ -7,7 +7,7 @@ Denoise. Update it in the same commit as any upstream or local patch change.
 
 | Layer                     | Pin                                        | Source                                              | Purpose                                          |
 | ------------------------- | ------------------------------------------ | --------------------------------------------------- | ------------------------------------------------ |
-| Rust API                  | `webrtc-audio-processing 2.1.0`            | crates.io / `tonarino/webrtc-audio-processing`      | Safe Rust processor API                          |
+| Rust API                  | `webrtc-audio-processing 2.1.0`            | vendored below `vendor/webrtc-audio-processing`     | Safe Rust processor API                          |
 | Rust configuration        | `webrtc-audio-processing-config 2.1.0`     | crates.io / same repository                         | APM configuration types                          |
 | Rust FFI/build            | `webrtc-audio-processing-sys 2.1.0`        | vendored below `vendor/webrtc-audio-processing-sys` | C++ bridge and bundled build                     |
 | Rust upstream commit      | `c14d7af1760baff83e8210fee336a0cae0faaa7d` | package `.cargo_vcs_info.json`                      | Published wrapper source provenance              |
@@ -21,8 +21,9 @@ strongest available algorithm pin for the current snapshot. The next upstream
 refresh must record both exact commit IDs here before integration.
 
 Cargo uses a tilde requirement for the high-level wrapper and locks it to
-2.1.0. The workspace patches only `webrtc-audio-processing-sys` to the local
-vendored directory so Windows build adaptations are reproducible.
+2.1.0. The workspace patches both `webrtc-audio-processing` and
+`webrtc-audio-processing-sys` to their local vendored directories so the
+diagnostic API and Windows build adaptations are reproducible.
 
 ## Source chain
 
@@ -44,8 +45,8 @@ Open Denoise does not currently modify those AEC3 algorithm files.
 
 ## Open Denoise local changes
 
-Local changes are confined to
-`vendor/webrtc-audio-processing-sys/build.rs` unless this file says otherwise:
+Local changes are confined to the two vendored Rust-wrapper directories and do
+not touch WebRTC's `modules/audio_processing/aec3/` algorithm sources:
 
 1. Build bundled WebRTC as C++20 with MSVC because the source uses designated
    initializers rejected by MSVC in C++17 mode.
@@ -64,12 +65,22 @@ Local changes are confined to
    compiling the library, but enabling the experimental AEC3 configuration
    makes the wrapper include internal WebRTC headers that otherwise select
    their pthread branch and collide with the Windows `min`/`max` macros.
+8. Expose `AudioProcessing::GetLinearAecOutput` through a fixed 160-sample C++
+   bridge and safe Rust `Processor::get_linear_aec_output` method. This is a
+   read-only diagnostic signal at 16 kHz.
+9. Allow the high-level wrapper to request linear AEC export when full AEC and
+   the matching AEC3 filter option are enabled, without also enabling WebRTC
+   noise suppression. This keeps AEC and independent NS isolated.
 
-These are build and linkage adaptations, not AEC behavior changes.
+Items 1-7 are build and linkage adaptations. Items 8-9 expose an existing
+upstream diagnostic output; they do not change AEC3 algorithm parameters or
+processing behavior. The vendored high-level source remains package version
+2.1.0 at Rust upstream commit
+`c14d7af1760baff83e8210fee336a0cae0faaa7d` apart from these recorded changes.
 
 ## Licenses
 
-- Rust wrapper: BSD-3-Clause; see
+- Rust wrapper: BSD-3-Clause; see `vendor/webrtc-audio-processing/COPYING` and
   `vendor/webrtc-audio-processing-sys/COPYING`.
 - FreeDesktop package: BSD-style license; see its `COPYING` file.
 - Google WebRTC: BSD-style license plus the accompanying `PATENTS` grant; see

@@ -4071,8 +4071,6 @@ dependencies = [
 [[package]]
 name = "webrtc-audio-processing"
 version = "2.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "190c57ced88d6307ba91778c245265a99f99d900a9239c87a1b15142330c9f7e"
 dependencies = [
  "webrtc-audio-processing-config",
  "webrtc-audio-processing-sys",

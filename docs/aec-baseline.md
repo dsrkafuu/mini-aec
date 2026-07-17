@@ -206,19 +206,54 @@ relative to 4.0, but remains above 31 dB and is eligible for blind listening.
 The acceptance question is whether the additional speech preservation is
 audible without returned video speech or new pumping.
 
+The anonymous result was that the three files were too similar to rank
+reliably. The earlier 4.0 preference therefore did not reproduce as a clear
+dose response. Keep the frozen default and stop tuning `max_inc_factor` until a
+specific processing stage is identified.
+
+## Linear AEC mechanism isolation
+
+The fixed M131 wrapper now exposes upstream
+`AudioProcessing::GetLinearAecOutput` as an opt-in diagnostic. Run it against
+the same captured input with:
+
+```powershell
+cargo run -p denoise-lab -- aec `
+  --run artifacts/runs/<run-id> `
+  --export-linear
+```
+
+The diagnostic writes:
+
+- `linear-aec-output-16khz.wav`: the mono 16 kHz output after linear echo
+  cancellation and before the residual echo suppressor.
+- `full-aec-output-16khz.wav`: the complete AEC output downsampled with a fixed
+  low-pass FIR for sample-rate-matched listening.
+- `aec-output.wav`: the unchanged complete 48 kHz output.
+
+On the controlled 40 s run, all 4,000 linear frames were available. The 48 kHz
+complete output was byte-identical to the existing frozen default output, so
+enabling diagnostic export did not alter the baseline. Segment RMS comparison
+showed the complete suppressor was 20.23 dB and 23.45 dB below the linear output
+in the two converged far-end-only intervals. Across the three double-talk
+intervals it was only 0.71-0.98 dB lower overall; listening is still required
+because brief word-tail suppression can be hidden by interval RMS.
+
 ## Interpretation and next gate
 
 The reference signal is usable, AEC3 converges on both gain settings, timestamp
 alignment is repeatable, and the default profile removes far-end speech during
 double-talk. The current blocker is near-end speech quality.
 
-The active gate is the round 3 anonymous A/B/C dose-response comparison:
+The active gate is the linear/full mechanism-isolation comparison:
 
-1. Rank A/B/C for voice naturalness and stable volume.
-2. For each file, note word-tail loss, pumping, and any returned video speech.
-3. Reveal the answer key only after the ranking is recorded.
-4. Keep a candidate only if it improves speech subjectively and retains the
-   far-end-only safety result.
+1. Compare the same double-talk intervals in the two 16 kHz files.
+2. Note which file preserves word tails, avoids pumping, and keeps near-end
+   volume stable.
+3. Separately note whether the linear output returns audible video speech.
+4. If linear preserves near-end speech better, investigate residual echo
+   suppressor controls. If it does not, investigate the linear canceller,
+   double-talk detection, and alignment before any more suppressor tuning.
 
 After double-talk passes, run a longer capture to measure clock drift and then
 move the same framing and processor contract into the real-time pipeline.
