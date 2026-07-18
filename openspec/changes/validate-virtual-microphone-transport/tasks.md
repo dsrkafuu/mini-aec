@@ -1,9 +1,9 @@
 ## 1. Upstream and Toolchain Baseline
 
-- [ ] 1.1 Add `driver/windows/UPSTREAM.md` with the fixed `microsoft/Windows-driver-samples` repository, `audio/sysvad` path, commit `2ee527bfeb0aeb6be11f0a8b6dce4011b358ce89`, retrieval date, MS-PL identity, imported file inventory and a local-patch ledger.
-- [ ] 1.2 Add the applicable MS-PL license text and source notices required for the imported SysVAD files, and verify that no file comes from the unpinned `microsoft/audio` copy or another repository.
-- [ ] 1.3 Add a read-only Windows driver preflight command that reports Windows, Visual Studio, SDK, WDK, MSBuild and signing-tool versions without changing boot, certificate, driver or device state.
-- [ ] 1.4 Import the minimum fixed SysVAD source needed by the prototype and record every build-only adaptation outside upstream AEC code in the patch ledger.
+- [x] 1.1 Add `driver/windows/UPSTREAM.md` with the fixed `microsoft/Windows-driver-samples` repository, `audio/sysvad` path, commit `2ee527bfeb0aeb6be11f0a8b6dce4011b358ce89`, retrieval date, MS-PL identity, imported file inventory and a local-patch ledger.
+- [x] 1.2 Add the applicable MS-PL license text and source notices required for the imported SysVAD files, and verify that no file comes from the unpinned `microsoft/audio` copy or another repository.
+- [x] 1.3 Add a read-only Windows driver preflight command that reports Windows, Visual Studio, SDK, WDK, MSBuild and signing-tool versions without changing boot, certificate, driver or device state.
+- [x] 1.4 Import the minimum fixed SysVAD source needed by the prototype and record every build-only adaptation outside upstream AEC code in the patch ledger.
 - [ ] 1.5 Build the unmodified or minimally adapted x64 Debug SysVAD baseline with the documented toolchain and record the clean-checkout command and result before adding a transport.
 
 ## 2. Shared Validation Contract

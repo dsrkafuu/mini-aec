@@ -1,0 +1,14 @@
+# Generated WDK and MSBuild output
+**/Debug/
+**/Release/
+**/x64/
+**/ARM64/
+out/
+
+# Development signing material and driver packages
+*.cat
+*.cer
+*.pdb
+*.pfx
+*.pvk
+*.sys
