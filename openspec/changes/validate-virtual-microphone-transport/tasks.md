@@ -4,7 +4,7 @@
 - [x] 1.2 Add the applicable MS-PL license text and source notices required for the imported SysVAD files, and verify that no file comes from the unpinned `microsoft/audio` copy or another repository.
 - [x] 1.3 Add a read-only Windows driver preflight command that reports Windows, Visual Studio, SDK, WDK, MSBuild and signing-tool versions without changing boot, certificate, driver or device state.
 - [x] 1.4 Import the minimum fixed SysVAD source needed by the prototype and record every build-only adaptation outside upstream AEC code in the patch ledger.
-- [ ] 1.5 Build the unmodified or minimally adapted x64 Debug SysVAD baseline with the documented toolchain and record the clean-checkout command and result before adding a transport.
+- [x] 1.5 Build the unmodified or minimally adapted x64 Debug SysVAD baseline with the documented toolchain and record the clean-checkout command and result before adding a transport.
 
 ## 2. Shared Validation Contract
 

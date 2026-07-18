@@ -44,8 +44,8 @@ No imported source, license, or notice file comes from `microsoft/audio`, a thir
 
 The baseline import contains no edits to upstream files. Project-owned files outside `driver/windows/vendor/sysvad` currently provide only:
 
-1. `driver/windows/scripts/preflight.ps1`: read-only Windows, Visual Studio, SDK, WDK, MSBuild, and SignTool discovery.
-2. `driver/windows/scripts/build-baseline.ps1`: builds the retained x64 Debug projects in dependency order with `SignMode=Off` and does not install a certificate or driver.
+1. `driver/windows/scripts/preflight.ps1`: read-only Windows, Visual Studio, complete SDK, WDK, x64 MSBuild, Spectre library, and SignTool discovery, including enforcement of a matching SDK/WDK build number.
+2. `driver/windows/scripts/build-baseline.ps1`: explicitly selects the matching SDK/WDK version and builds the retained x64 Debug projects in dependency order with the x64 MSBuild host and `SignMode=Off`; it does not install a certificate or driver.
 3. `driver/windows/scripts/verify-upstream.ps1`: verifies the temporary checkout commit, exact imported-file set, and SHA-256 content equality without changing either tree.
 4. `driver/windows/.gitattributes`: disables Git whitespace diagnostics only for byte-identical vendored SysVAD files because the Microsoft snapshot contains existing trailing whitespace that MiniAEC must not normalize silently.
 5. `driver/windows/.gitignore`: excludes generated WDK output, driver binaries, and development signing material.

@@ -40,6 +40,7 @@ $vswhere = $vswhereCandidates | Where-Object { Test-Path -LiteralPath $_ -PathTy
 $visualStudio = $null
 $visualStudioPath = $null
 $msbuildPath = $null
+$msbuildArchitecture = $null
 
 if ($vswhere) {
     $installationJson = & $vswhere -latest -products '*' -requires Microsoft.Component.MSBuild -format json -utf8
@@ -47,9 +48,14 @@ if ($vswhere) {
     if ($installation) {
         $visualStudio = "{0} ({1})" -f $installation.displayName, $installation.installationVersion
         $visualStudioPath = $installation.installationPath
-        $candidateMsbuild = Join-Path $installation.installationPath 'MSBuild\Current\Bin\MSBuild.exe'
-        if (Test-Path -LiteralPath $candidateMsbuild -PathType Leaf) {
-            $msbuildPath = $candidateMsbuild
+        foreach ($candidate in @(
+            @{ Path = (Join-Path $installation.installationPath 'MSBuild\Current\Bin\amd64\MSBuild.exe'); Architecture = 'x64' },
+            @{ Path = (Join-Path $installation.installationPath 'MSBuild\Current\Bin\MSBuild.exe'); Architecture = 'x86' }
+        )) {
+            if (-not $msbuildPath -and (Test-Path -LiteralPath $candidate.Path -PathType Leaf)) {
+                $msbuildPath = $candidate.Path
+                $msbuildArchitecture = $candidate.Architecture
+            }
         }
     }
 }
@@ -124,6 +130,7 @@ $result = [ordered]@{
     VsWhere = $vswhere
     MSBuildPath = $msbuildPath
     MSBuildVersion = Get-ExistingFileVersion -Path $msbuildPath
+    MSBuildArchitecture = $msbuildArchitecture
     MsvcVersions = $msvcVersions
     CppCompilerPath = $cppCompilerPath
     CppCompilerVersion = Get-ExistingFileVersion -Path $cppCompilerPath

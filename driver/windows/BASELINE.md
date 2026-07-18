@@ -15,16 +15,15 @@ The build script compiles `EndpointsCommon.vcxproj` followed by `TabletAudioSamp
 | --- | --- |
 | Windows | Windows 11 Pro for Workstations 25H2, build 26200.8875 |
 | Visual Studio | Visual Studio Build Tools 2026, 18.8.12009.203 |
-| MSBuild | 18.8.2 |
+| MSBuild | 18.8.2, x64 host |
 | MSVC x64 compiler | 14.51.36248.0 |
 | x64 Spectre-mitigated C++ libraries | Installed for MSVC 14.51.36231 |
-| Complete Windows SDK | 10.0.26100.8249 |
-| Incomplete Windows SDK content | 10.0.28000.1839 ARM64 and WDK-supplied content; missing the complete SDK package, UAP metadata, and x64 UCRT libraries |
+| Complete Windows SDK | 10.0.28000.2114 |
 | Windows Driver Kit | 10.0.28000.1839 |
-| x64 SignTool | 10.0.26100.8249 |
+| x64 SignTool | 10.0.28000.2114 |
 
 ## Current result
 
-The read-only preflight stops with exit code 1 because there is no matching complete SDK/WDK build pair. WinGet does not report `Microsoft.WindowsSDK.10.0.28000` as installed. The first compile attempt, before the preflight completeness check was tightened, let MSBuild select the incomplete target version `10.0` and failed because `DDK_INC_PATH` was empty. Explicitly selecting `10.0.28000.0` correctly populated `DDK_INC_PATH` but then failed with MSB8036 because the complete SDK is absent.
+Both intended clean-checkout commands completed with exit code 0. The build produced `EndpointsCommon.lib` (1,934,660 bytes), `TabletAudioSample.sys` (443,904 bytes), and the stamped `ComponentizedApoSample.inf`, `ComponentizedAudioSample.inf`, and `ComponentizedAudioSampleExtension.inf` files under ignored x64 Debug output directories. WDK INF verification and Universal API validation passed; catalog generation was skipped because the unsigned baseline has no catalog input.
 
-Install the complete Windows SDK 28000 package linked from Microsoft's WDK setup step 2, then rerun the two intended clean-checkout commands. The build script now selects the highest complete matching SDK/WDK version explicitly so MSBuild cannot silently fall back to `10.0`. OpenSpec task 1.5 remains incomplete until the unsigned build succeeds. No driver, certificate, boot option, or audio device state was changed.
+The build script explicitly selects the highest complete matching SDK/WDK version so MSBuild cannot silently fall back to `10.0`. It also uses the x64 MSBuild host because WDK 28000 does not install the x86 `InfVerif.dll` required by its 32-bit package-verification task. No imported SysVAD source file was modified. No driver, certificate, boot option, or audio device state was changed.
