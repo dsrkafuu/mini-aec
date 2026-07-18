@@ -3,7 +3,7 @@
 ## Decision
 
 The current WebRTC M131 AEC3 implementation is a frozen product baseline, not a
-rolling dependency. Open Denoise monitors upstream development but upgrades
+rolling dependency. MiniAEC monitors upstream development but upgrades
 only through a measured candidate process.
 
 This separation is necessary because Google WebRTC `main` is a Chromium
@@ -127,7 +127,7 @@ listening remain required.
 ## Rollout and rollback
 
 Land an accepted upgrade as its own bounded commit. Do not combine it with
-capture, synchronization, UI, NS, or gain-control changes. Preserve the prior
+capture, synchronization, tray, virtual-driver, or audio-format changes. Preserve the prior
 pin and benchmark report in Git history and document the command needed to
 reproduce the comparison.
 

@@ -1,107 +1,95 @@
 # WebRTC AEC upstream provenance
 
-This file is the source of truth for the AEC implementation vendored by Open
-Denoise. Update it in the same commit as any upstream or local patch change.
+This file is the source of truth for the AEC implementation used by MiniAEC.
+Update it in the same commit as any upstream pin or local patch change.
 
 ## Current pin
 
-| Layer                     | Pin                                        | Source                                              | Purpose                                          |
-| ------------------------- | ------------------------------------------ | --------------------------------------------------- | ------------------------------------------------ |
-| Rust API                  | `webrtc-audio-processing 2.1.0`            | vendored below `vendor/webrtc-audio-processing`     | Safe Rust processor API                          |
-| Rust configuration        | `webrtc-audio-processing-config 2.1.0`     | crates.io / same repository                         | APM configuration types                          |
-| Rust FFI/build            | `webrtc-audio-processing-sys 2.1.0`        | vendored below `vendor/webrtc-audio-processing-sys` | C++ bridge and bundled build                     |
-| Rust upstream commit      | `c14d7af1760baff83e8210fee336a0cae0faaa7d` | package `.cargo_vcs_info.json`                      | Published wrapper source provenance              |
-| C++ distribution          | FreeDesktop `webrtc-audio-processing 2.1`  | bundled inside the `-sys` crate                     | Distribution-oriented APM source and Meson build |
-| Google algorithm baseline | WebRTC M131                                | recorded by FreeDesktop release notes               | APM and AEC3 implementation                      |
+| Layer | Pin | Source | Purpose |
+| --- | --- | --- | --- |
+| Rust API | `webrtc-audio-processing 2.1.0` | crates.io | Safe Rust processor API |
+| Rust configuration | `webrtc-audio-processing-config 2.1.0` | crates.io | Stable APM configuration types |
+| Rust FFI/build | `webrtc-audio-processing-sys 2.1.0` | `vendor/webrtc-audio-processing-sys` | C++ bridge and reproducible Windows build |
+| Rust upstream commit | `c14d7af1760baff83e8210fee336a0cae0faaa7d` | published package `.cargo_vcs_info.json` | Wrapper provenance |
+| C++ distribution | FreeDesktop `webrtc-audio-processing 2.1` | bundled inside the vendored `-sys` crate | Distribution-oriented APM source and Meson build |
+| Google algorithm baseline | WebRTC M131 | FreeDesktop release metadata | APM and AEC3 implementation |
 
-The published package records the Rust repository commit but does not retain
-the nested FreeDesktop Git metadata. Therefore an exact FreeDesktop commit and
-Google WebRTC commit cannot be recovered from this package alone. M131 is the
-strongest available algorithm pin for the current snapshot. The next upstream
-refresh must record both exact commit IDs here before integration.
+The high-level Rust wrapper is not vendored or locally modified. Cargo locks it
+to 2.1.0 and patches only `webrtc-audio-processing-sys` to the project-owned
+Windows build layer.
 
-Cargo uses a tilde requirement for the high-level wrapper and locks it to
-2.1.0. The workspace patches both `webrtc-audio-processing` and
-`webrtc-audio-processing-sys` to their local vendored directories so the
-diagnostic API and Windows build adaptations are reproducible.
+The published package does not retain the nested FreeDesktop Git metadata, so
+the exact FreeDesktop and Google WebRTC commits cannot be reconstructed from
+this snapshot. M131 is the strongest available algorithm pin. A future refresh
+must record exact commits before integration.
 
 ## Source chain
 
 ```text
 Google WebRTC M131 modules/audio_processing/aec3
   -> FreeDesktop webrtc-audio-processing 2.1 extraction and Meson packaging
-  -> tonarino Rust wrapper 2.1.0 and C++ bridge
-  -> Open Denoise timestamp alignment and 10 ms frame adapter
+  -> tonarino webrtc-audio-processing-sys 2.1.0 C++ bridge
+  -> crates.io webrtc-audio-processing 2.1.0 safe Rust API
+  -> MiniAEC timestamp alignment and 10 ms adapter
 ```
 
-The actual echo cancellation algorithm lives under:
+The actual echo-cancellation algorithm lives under:
 
 ```text
 vendor/webrtc-audio-processing-sys/webrtc-audio-processing/
   webrtc/modules/audio_processing/aec3/
 ```
 
-Open Denoise does not currently modify those AEC3 algorithm files.
+MiniAEC does not modify those AEC3 algorithm files.
 
-## Open Denoise local changes
+## MiniAEC local changes
 
-Local changes are confined to the two vendored Rust-wrapper directories and do
-not touch WebRTC's `modules/audio_processing/aec3/` algorithm sources:
+Local changes are confined to the vendored `webrtc-audio-processing-sys`
+build/wrapper layer:
 
 1. Build bundled WebRTC as C++20 with MSVC because the source uses designated
    initializers rejected by MSVC in C++17 mode.
-2. Build the wrapper itself as C++20 on MSVC and avoid GCC-only warning flags.
+2. Build the wrapper as C++20 on MSVC and avoid GCC-only warning flags.
 3. Define compatibility macros for bindgen/libclang parsing of current Visual
    Studio headers.
 4. Disable archive symbol prefixing on MSVC. LLVM objcopy does not reliably
-   rewrite the wrapper archive's MSVC C++ undefined references, and Open Denoise
+   rewrite the wrapper archive's MSVC C++ undefined references, and MiniAEC
    links only one WebRTC major version.
-5. Link the MSVC static WebRTC archive with Cargo's verbatim, non-bundled native
+5. Link the MSVC static archive with Cargo's verbatim, non-bundled native
    library syntax so the final executable retains it.
-6. Copy bundled sources with Rust `fs_extra` rather than requiring Unix `cp` on
+6. Copy bundled sources with Rust `fs_extra` instead of requiring Unix `cp` on
    Windows.
-7. Define `WEBRTC_WIN` and `NOMINMAX` for the standalone C++ wrapper and
-   bindgen pass. Meson already supplies equivalent Windows configuration while
-   compiling the library, but enabling the experimental AEC3 configuration
-   makes the wrapper include internal WebRTC headers that otherwise select
-   their pthread branch and collide with the Windows `min`/`max` macros.
-8. Expose `AudioProcessing::GetLinearAecOutput` through a fixed 160-sample C++
-   bridge and safe Rust `Processor::get_linear_aec_output` method. This is a
-   read-only diagnostic signal at 16 kHz.
-9. Allow the high-level wrapper to request linear AEC export when full AEC and
-   the matching AEC3 filter option are enabled, without also enabling WebRTC
-   noise suppression. This keeps AEC and independent NS isolated.
+7. Define `WEBRTC_WIN` and `NOMINMAX` for the standalone wrapper and bindgen
+   pass so Windows headers select compatible paths and avoid `min`/`max` macro
+   collisions.
 
-Items 1-7 are build and linkage adaptations. Items 8-9 expose an existing
-upstream diagnostic output; they do not change AEC3 algorithm parameters or
-processing behavior. The vendored high-level source remains package version
-2.1.0 at Rust upstream commit
-`c14d7af1760baff83e8210fee336a0cae0faaa7d` apart from these recorded changes.
+These changes adapt build and linkage only. The former linear AEC getter and
+high-level experimental configuration changes were removed when the product
+returned to the upstream-default AEC3 baseline.
 
 ## Licenses
 
-- Rust wrapper: BSD-3-Clause; see `vendor/webrtc-audio-processing/COPYING` and
+- Rust API wrapper: BSD-3-Clause, distributed by crates.io.
+- Vendored FFI/build wrapper: BSD-3-Clause; see
   `vendor/webrtc-audio-processing-sys/COPYING`.
-- FreeDesktop package: BSD-style license; see its `COPYING` file.
-- Google WebRTC: BSD-style license plus the accompanying `PATENTS` grant; see
-  the files below the vendored WebRTC root.
+- FreeDesktop package: BSD-style license; see its bundled `COPYING`.
+- Google WebRTC: BSD-style license and accompanying `PATENTS` grant under the
+  vendored WebRTC root.
 - Third-party components retain their own license files in the source tree.
 
-Do not remove upstream license, patent, authorship, or third-party notice files
-when refreshing the vendor tree.
+Do not remove license, patent, authorship, or third-party notice files when
+refreshing the vendor tree.
 
 ## Update policy
 
 Do not update this snapshot merely because Google WebRTC `main` changed. Start
-an upgrade only when one of the triggers in
-`docs/upstream-upgrade-plan.md` applies, and accept it only after the complete
-old/new regression gate passes.
+an upgrade only when a trigger in `docs/upstream-upgrade-plan.md` applies, and
+accept it only after the complete identical-input regression gate passes.
 
 Preferred source order:
 
-1. A stable FreeDesktop `webrtc-audio-processing` release with a known WebRTC
-   milestone and exact commits.
+1. A stable FreeDesktop release with a known WebRTC milestone and exact commit.
 2. A matching stable Rust wrapper release.
 3. A project-owned Google WebRTC snapshot only when a measured product blocker
    has an upstream fix unavailable through the stable packaging chain and the
-   additional maintenance scope is explicitly approved.
+   added maintenance scope is explicitly approved.

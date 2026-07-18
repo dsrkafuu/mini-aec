@@ -277,7 +277,7 @@ mod webrtc {
     ) -> Result<Vec<String>> {
         if cfg!(target_env = "msvc") {
             // llvm-objcopy does not reliably rewrite MSVC C++ undefined
-            // references inside the wrapper archive. Open Denoise links a
+            // references inside the wrapper archive. MiniAEC links a
             // single WebRTC major version, so symbol isolation is unnecessary.
             return Ok(vec![]);
         }

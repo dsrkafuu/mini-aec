@@ -1,87 +1,110 @@
-# Open Denoise
+# MiniAEC
 
-Open Denoise is an experimental desktop application for real-time microphone
-echo cancellation and speech noise suppression.
+MiniAEC is a Windows 11 x64 hands-free acoustic echo canceller. It captures a
+physical microphone together with the actual speaker render loopback, removes
+the loudspeaker echo with WebRTC AEC3, and will publish the processed signal as
+the bundled `MiniAEC Microphone` capture endpoint.
 
-The current repository contains the Tauri 2, Rust, React, and TypeScript
-application shell. Audio-engine development will start with a Windows proof of
-concept that records a physical microphone, a WASAPI render-loopback reference,
-and processed output for comparison.
+MiniAEC intentionally stops at AEC. Noise suppression, automatic gain control,
+equalization, and voice enhancement belong after `MiniAEC Microphone`, for
+example in NVIDIA Broadcast or the selected meeting application.
 
-See [docs/technical-plan.md](docs/technical-plan.md) for the architecture,
-validation plan, delivery phases, and engineering constraints.
+## Current status
 
-AEC source pins and local patches are recorded in
-[vendor/UPSTREAM.md](vendor/UPSTREAM.md). Future WebRTC upgrades must follow
+- The application is a windowless Tauri 2 Rust process with a Windows tray
+  menu. The audio-related entries are disabled until the real-time engine is
+  connected.
+- `mini-aec-lab` can enumerate Windows endpoints, capture a physical microphone
+  and WASAPI render loopback together, align them by QPC timestamps, and run the
+  frozen default WebRTC AEC3 baseline offline.
+- The virtual audio driver and real-time engine are not implemented yet. This
+  repository does not currently produce a usable `MiniAEC Microphone` endpoint
+  and is not a usable product release.
+- OpenSpec is intentionally not initialized yet. It will be introduced after
+  this repository baseline is accepted.
+
+See [docs/technical-plan.md](docs/technical-plan.md) for the architecture and
+delivery gates. AEC provenance and upgrade rules live in
+[vendor/UPSTREAM.md](vendor/UPSTREAM.md) and
 [docs/upstream-upgrade-plan.md](docs/upstream-upgrade-plan.md).
 
-## Development
+## Repository layout
 
-```bash
-bun install
-bun run tauri dev
+```text
+src-tauri/                 windowless Tauri tray host
+crates/mini-aec-lab/       capture and offline AEC validation CLI
+driver/windows/            MiniAEC Microphone driver boundary and provenance
+docs/                      active architecture and validation contracts
+vendor/                    pinned Windows build layer for WebRTC AEC3
+artifacts/                 ignored private local recordings
 ```
 
-Run the frontend checks with:
+The future real-time engine belongs in `crates/mini-aec-engine/`. It must remain
+independent from Tauri and expose project-owned audio and `EchoCanceller`
+boundaries instead of WebRTC-specific types.
 
-```bash
-bun run format:check
-bun run lint
-bun run build
-```
+## Tray application
 
-Inspect the Windows audio endpoints and their shared-mode formats with:
+Compile the tray host with:
 
 ```powershell
-cargo run -p denoise-lab -- devices
+cargo check -p mini-aec
 ```
 
-Record a timestamped microphone and render-loopback diagnostic run with:
+Run it with:
 
 ```powershell
-cargo run -p denoise-lab -- capture --duration 30 --microphone "<physical microphone name or endpoint ID>" --render "<physical speaker name or endpoint ID>"
+cargo run -p mini-aec
 ```
 
-Capture artifacts are written below `artifacts/runs/` and are ignored by Git.
-When a virtual microphone such as Krisp is the Windows default, select the
-physical microphone explicitly to avoid measuring another processor instead of
-the raw device.
+The process creates no WebView or application window. Right-click the tray icon
+to inspect the scaffolded status and exit the process.
 
-Align a captured run using its WASAPI/QPC timestamps and process it through
-WebRTC AEC3 with automatic delay estimation:
+## Diagnostic CLI
+
+List Windows audio endpoints and shared-mode formats:
 
 ```powershell
-cargo run -p denoise-lab -- aec --run artifacts/runs/<run-id>
+cargo run -p mini-aec-lab -- devices
 ```
 
-To compare against a known acoustic-delay hint, add (for example)
-`--stream-delay-ms 60`. Each mode writes aligned source tracks,
-`aec-output.wav`, and `aec-report.json` below the run's `processed/` directory.
-
-For mechanism-isolation diagnostics, export WebRTC's pre-suppressor linear AEC
-signal alongside the complete AEC output:
+Capture a physical microphone and render-loopback reference together:
 
 ```powershell
-cargo run -p denoise-lab -- aec --run artifacts/runs/<run-id> --export-linear
+cargo run -p mini-aec-lab -- capture --duration 30 --microphone "<physical microphone name or endpoint ID>" --render "<physical speaker name or endpoint ID>"
 ```
 
-This additionally writes `linear-aec-output-16khz.wav` and a sample-rate-matched
-`full-aec-output-16khz.wav`. Linear export is opt-in and does not enable noise
-suppression or change the ordinary frozen baseline path.
+Capture artifacts are written below `artifacts/runs/` and ignored by Git. When
+another virtual microphone is the Windows default, select the physical device
+explicitly so the source is not preprocessed.
 
-### Bundled WebRTC build on Windows
+Align a capture by WASAPI/QPC timestamps and process it through the default
+WebRTC M131 AEC3 configuration:
 
-The repository pins and patches `webrtc-audio-processing` and its `-sys` crate
-so the diagnostic API and bundled WebRTC AEC3 source build reproducibly with
-MSVC. Build from an x64 Visual Studio Developer PowerShell with the C++ build
-tools installed. The native build also requires:
+```powershell
+cargo run -p mini-aec-lab -- aec --run artifacts/runs/<run-id>
+```
 
-- Python with `meson`, `ninja`, and `libclang` packages available.
-- `LIBCLANG_PATH` pointing to the directory containing `libclang.dll` when it
-  cannot be discovered automatically.
+To compare a fixed acoustic delay hint, add `--stream-delay-ms 60`. Output is
+written below `processed/aec-default-adaptive/` or
+`processed/aec-default-delay-<N>ms/`.
 
-The first AEC build compiles the bundled WebRTC C++ sources and is substantially
-slower than subsequent Cargo builds.
+## Bundled WebRTC build on Windows
 
-See [docs/aec-baseline.md](docs/aec-baseline.md) for the current offline
-validation result and remaining acceptance tests.
+The safe Rust wrapper is pinned to `webrtc-audio-processing 2.1.0` from
+crates.io. The `webrtc-audio-processing-sys` crate and FreeDesktop M131 source
+snapshot remain vendored for reproducible MSVC adaptations.
+
+Build from an x64 Visual Studio Developer PowerShell with the C++ build tools,
+Meson, Ninja, and libclang available. This workspace also keeps a local helper
+at `.tools/cargo-webrtc.cmd` on configured development machines.
+
+## Checks
+
+```powershell
+cargo fmt --all -- --check
+.tools\cargo-webrtc.cmd test --workspace
+.tools\cargo-webrtc.cmd clippy --workspace --all-targets -- -D warnings
+```
+
+There are no frontend checks or Node/Bun project dependencies.
