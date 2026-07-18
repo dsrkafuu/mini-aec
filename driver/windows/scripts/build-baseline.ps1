@@ -13,6 +13,14 @@ if ($LASTEXITCODE -ne 0) {
 }
 $preflight = $preflightJson | ConvertFrom-Json
 
+$kitVersion = @($preflight.WindowsDriverKitVersions) |
+    Where-Object { $_ -in @($preflight.WindowsSdkVersions) } |
+    Sort-Object { [version]$_ } -Descending |
+    Select-Object -First 1
+if (-not $kitVersion) {
+    throw 'Driver toolchain preflight did not report a matching Windows SDK/WDK build number.'
+}
+
 $commonProject = Join-Path $sysvadRoot 'EndpointsCommon\EndpointsCommon.vcxproj'
 $driverProject = Join-Path $sysvadRoot 'TabletAudioSample\TabletAudioSample.vcxproj'
 foreach ($project in @($commonProject, $driverProject)) {
@@ -27,6 +35,7 @@ $arguments = @(
     '/restore:false',
     '/p:Configuration=Debug',
     '/p:Platform=x64',
+    "/p:WindowsTargetPlatformVersion=$kitVersion",
     '/p:SignMode=Off',
     '/verbosity:minimal'
 )

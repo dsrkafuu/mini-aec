@@ -86,13 +86,30 @@ foreach ($registryPath in @('HKLM:\SOFTWARE\Microsoft\Windows Kits\Installed Roo
 }
 
 $sdkVersions = @()
+$incompleteSdkVersions = @()
 $wdkVersions = @()
 $signToolPath = $null
 if ($kitsRoot) {
-    $sdkVersions = Get-VersionDirectories -Path (Join-Path $kitsRoot 'Include')
+    $sdkCandidates = Get-VersionDirectories -Path (Join-Path $kitsRoot 'Include')
+    foreach ($version in $sdkCandidates) {
+        $requiredSdkPaths = @(
+            (Join-Path $kitsRoot "DesignTime\CommonConfiguration\Neutral\UAP\$version\UAP.props"),
+            (Join-Path $kitsRoot "Include\$version\shared\sdkddkver.h"),
+            (Join-Path $kitsRoot "Include\$version\um\Windows.h"),
+            (Join-Path $kitsRoot "Include\$version\ucrt\stdio.h"),
+            (Join-Path $kitsRoot "Lib\$version\um\x64\gdi32.lib"),
+            (Join-Path $kitsRoot "Lib\$version\ucrt\x64\ucrt.lib")
+        )
+        if (@($requiredSdkPaths | Where-Object { -not (Test-Path -LiteralPath $_ -PathType Leaf) }).Count -eq 0) {
+            $sdkVersions += $version
+        } else {
+            $incompleteSdkVersions += $version
+        }
+    }
     $buildRoot = Join-Path $kitsRoot 'build'
     $wdkVersions = @(Get-VersionDirectories -Path $buildRoot | Where-Object { Test-Path -LiteralPath (Join-Path $buildRoot "$_\WindowsDriver.Common.targets") -PathType Leaf })
-    foreach ($version in @($wdkVersions | Sort-Object { [version]$_ } -Descending)) {
+    $toolVersions = @(($wdkVersions + $sdkVersions + $incompleteSdkVersions) | Sort-Object { [version]$_ } -Descending -Unique)
+    foreach ($version in $toolVersions) {
         $candidateSignTool = Join-Path $kitsRoot "bin\$version\x64\signtool.exe"
         if (Test-Path -LiteralPath $candidateSignTool -PathType Leaf) {
             $signToolPath = $candidateSignTool
@@ -113,6 +130,7 @@ $result = [ordered]@{
     SpectreLibrariesPath = $spectreLibrariesPath
     KitsRoot10 = $kitsRoot
     WindowsSdkVersions = $sdkVersions
+    IncompleteWindowsSdkVersions = $incompleteSdkVersions
     WindowsDriverKitVersions = $wdkVersions
     SignToolPath = $signToolPath
     SignToolVersion = Get-ExistingFileVersion -Path $signToolPath
@@ -131,6 +149,7 @@ if (-not $cppCompilerPath) { $missing += 'x64 C++ compiler' }
 if (-not $spectreLibrariesPath) { $missing += 'x64 Spectre-mitigated C++ libraries' }
 if ($sdkVersions.Count -eq 0) { $missing += 'Windows SDK' }
 if ($wdkVersions.Count -eq 0) { $missing += 'Windows Driver Kit build targets' }
+if ($sdkVersions.Count -gt 0 -and $wdkVersions.Count -gt 0 -and @($sdkVersions | Where-Object { $_ -in $wdkVersions }).Count -eq 0) { $missing += 'matching Windows SDK/WDK build number' }
 if (-not $signToolPath) { $missing += 'x64 SignTool' }
 
 if ($missing.Count -gt 0) {
