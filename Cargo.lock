@@ -1910,6 +1910,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "mini-aec-sender"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "mini-aec-transport",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "mini-aec-transport"
+version = "0.1.0"
+
+[[package]]
 name = "minimal-lexical"
 version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"

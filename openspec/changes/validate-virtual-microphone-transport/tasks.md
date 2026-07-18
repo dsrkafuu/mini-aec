@@ -8,11 +8,11 @@
 
 ## 2. Shared Validation Contract
 
-- [ ] 2.1 Define a project-owned `VirtualMicrophoneSink` boundary for fixed-format session open, PCM write, diagnostics and close operations without exposing WaveRT, IOCTL or SysVAD types to the caller.
-- [ ] 2.2 Implement the minimal user-mode sender with a deterministic 48 kHz mono PCM16 signal, periodic audible markers, session identity, monotonic frame sequence logging and explicit error reporting.
-- [ ] 2.3 Define one versioned diagnostics schema for session transitions, accepted frames, rejected writes, underruns, overflows and driver restarts that both candidate transports must emit.
-- [ ] 2.4 Add unit tests for signal determinism, frame sequencing, session reset and transport adapter error mapping without accessing a physical microphone or private `artifacts/` data.
-- [ ] 2.5 Document the identical five-minute input, endpoint-enumeration checks, Windows Recorder steps, sender restart sequence, driver restart sequence and evidence fields used for both candidate transports.
+- [x] 2.1 Define a project-owned `VirtualMicrophoneSink` boundary for fixed-format session open, PCM write, diagnostics and close operations without exposing WaveRT, IOCTL or SysVAD types to the caller.
+- [x] 2.2 Implement the minimal user-mode sender with a deterministic 48 kHz mono PCM16 signal, periodic audible markers, session identity, monotonic frame sequence logging and explicit error reporting.
+- [x] 2.3 Define one versioned diagnostics schema for session transitions, accepted frames, rejected writes, underruns, overflows and driver restarts that both candidate transports must emit.
+- [x] 2.4 Add unit tests for signal determinism, frame sequencing, session reset and transport adapter error mapping without accessing a physical microphone or private `artifacts/` data.
+- [x] 2.5 Document the identical five-minute input, endpoint-enumeration checks, Windows Recorder steps, sender restart sequence, driver restart sequence and evidence fields used for both candidate transports.
 
 ## 3. Private WaveRT Render Sink Spike
 
