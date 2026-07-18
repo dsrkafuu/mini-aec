@@ -13,8 +13,6 @@
 #include "rtc_base/ref_counted_object.h"
 #endif
 
-#include <algorithm>
-#include <array>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -142,17 +140,6 @@ int process_capture_frame(AudioProcessing* ap,
   // configs.
   return ap->processor->ProcessStream(channels, capture_stream_config,
                                       capture_stream_config, channels);
-}
-
-bool get_linear_aec_output(AudioProcessing* ap, float* output) {
-  std::array<float, 160> linear_output{};
-  rtc::ArrayView<std::array<float, 160>> output_view(&linear_output, 1);
-  if (!ap->processor->GetLinearAecOutput(output_view)) {
-    return false;
-  }
-
-  std::copy(linear_output.begin(), linear_output.end(), output);
-  return true;
 }
 
 int process_render_frame(AudioProcessing* ap,

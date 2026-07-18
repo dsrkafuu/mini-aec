@@ -1,55 +1,22 @@
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::{bail, Context, Result};
-use clap::ValueEnum;
 use hound::{SampleFormat, WavReader, WavSpec, WavWriter};
 use serde::{Deserialize, Serialize};
 use webrtc_audio_processing::config::EchoCanceller;
-use webrtc_audio_processing::experimental::EchoCanceller3Config;
-use webrtc_audio_processing::{Config, Processor, Stats, LINEAR_AEC_OUTPUT_SAMPLES};
+use webrtc_audio_processing::{Config, Processor, Stats};
 
 const SAMPLE_RATE: u32 = 48_000;
-const LINEAR_SAMPLE_RATE: u32 = 16_000;
 const QPC_TICKS_PER_SECOND: u64 = 10_000_000;
 const FRAME_SAMPLES: usize = 480;
-
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, ValueEnum)]
-#[serde(rename_all = "kebab-case")]
-pub enum AecProfile {
-  /// Frozen WebRTC M131 defaults.
-  #[default]
-  Default,
-  /// Enter near-end mode sooner and hold it longer to reduce state pumping.
-  NearendStable,
-  /// Slow gain drops and allow faster recovery while near-end speech is present.
-  SpeechSafe,
-  /// Change only the near-end gain increase limit to allow faster recovery.
-  RecoveryFast,
-  /// Increase the near-end gain recovery limit further for dose-response testing.
-  RecoveryFaster,
-  /// Change only the low-frequency gain decrease limit to soften gain drops.
-  DropSmooth,
-  /// Use M131's more-transparent near-end low-frequency masking thresholds.
-  NearendLfTransparent,
-  /// Use M131's more-transparent near-end high-frequency masking thresholds.
-  NearendHfTransparent,
-}
+const AEC_IMPLEMENTATION: &str = "webrtc-audio-processing 2.1 / WebRTC M131";
+const AEC_CONFIGURATION: &str = "upstream-default";
 
 pub struct AecConfig {
   pub run_dir: PathBuf,
   pub stream_delay_ms: Option<u16>,
-  pub active_threshold_dbfs: f64,
-  pub profile: AecProfile,
-  pub export_linear: bool,
-}
-
-pub struct BlindAecConfig {
-  pub run_dir: PathBuf,
-  pub segments: Vec<String>,
-  pub profiles: Vec<AecProfile>,
   pub active_threshold_dbfs: f64,
 }
 
@@ -75,6 +42,8 @@ struct CaptureStats {
 struct AecReport {
   schema_version: u32,
   source_run: String,
+  aec_implementation: &'static str,
+  aec_configuration: &'static str,
   sample_rate: u32,
   frame_samples: usize,
   frames_processed: usize,
@@ -82,23 +51,11 @@ struct AecReport {
   microphone_offset_samples: usize,
   render_offset_samples: usize,
   microphone_minus_render_start_ms: f64,
-  profile: AecProfile,
   stream_delay_ms: Option<u16>,
   active_threshold_dbfs: f64,
   metrics: AecMetrics,
   active_frame_stats: Option<AecStats>,
   final_stats: AecStats,
-  linear_output: Option<LinearOutputReport>,
-}
-
-#[derive(Debug, Serialize)]
-struct LinearOutputReport {
-  sample_rate: u32,
-  frame_samples: usize,
-  frames_available: usize,
-  frames_missing: usize,
-  output_file: String,
-  comparison_output_file: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -131,52 +88,12 @@ struct AlignedAudio {
   microphone_minus_render_start_ms: f64,
 }
 
-struct ProcessOutput {
-  output_dir: PathBuf,
-  aec_output: Vec<f32>,
-}
-
 struct AecRunOutput {
   aec_output: Vec<f32>,
-  linear_output: Option<Vec<f32>>,
-  linear_frames_available: usize,
-  linear_frames_missing: usize,
   active_frame_stats: Option<AecStats>,
 }
 
-#[derive(Clone, Debug, Serialize)]
-struct ListeningSegment {
-  start_seconds: f64,
-  end_seconds: f64,
-}
-
-#[derive(Debug, Serialize)]
-struct BlindManifest {
-  schema_version: u32,
-  source_run: String,
-  experiment_id: String,
-  segments: Vec<ListeningSegment>,
-  files: Vec<String>,
-}
-
-#[derive(Debug, Serialize)]
-struct BlindAnswerKey {
-  schema_version: u32,
-  experiment_id: String,
-  assignments: BTreeMap<String, BlindAssignment>,
-}
-
-#[derive(Debug, Serialize)]
-struct BlindAssignment {
-  profile: AecProfile,
-  source_report: String,
-}
-
 pub fn process(config: &AecConfig) -> Result<()> {
-  process_internal(config).map(|_| ())
-}
-
-fn process_internal(config: &AecConfig) -> Result<ProcessOutput> {
   if !config.active_threshold_dbfs.is_finite() {
     bail!("active threshold must be finite");
   }
@@ -200,12 +117,7 @@ fn process_internal(config: &AecConfig) -> Result<ProcessOutput> {
   let microphone_qpc = required_qpc(microphone_track, "microphone")?;
   let render_qpc = required_qpc(render_track, "render-reference")?;
   let aligned = align_tracks(&microphone[0], &render, microphone_qpc, render_qpc);
-  let output_dir = output_directory(
-    &config.run_dir,
-    config.stream_delay_ms,
-    config.profile,
-    config.export_linear,
-  );
+  let output_dir = output_directory(&config.run_dir, config.stream_delay_ms);
   fs::create_dir_all(&output_dir)
     .with_context(|| format!("failed to create {}", output_dir.display()))?;
 
@@ -218,7 +130,7 @@ fn process_internal(config: &AecConfig) -> Result<ProcessOutput> {
     &aligned.render,
   )?;
 
-  let processor = create_processor(config.profile, config.export_linear)?;
+  let processor = Processor::new(SAMPLE_RATE).context("failed to create WebRTC processor")?;
   processor.set_config(Config {
     echo_canceller: Some(EchoCanceller::Full {
       stream_delay_ms: config.stream_delay_ms,
@@ -230,31 +142,21 @@ fn process_internal(config: &AecConfig) -> Result<ProcessOutput> {
     &aligned.microphone,
     &aligned.render,
     config.active_threshold_dbfs,
-    config.export_linear,
   )?;
   let AecRunOutput {
     aec_output,
-    linear_output,
-    linear_frames_available,
-    linear_frames_missing,
     active_frame_stats,
   } = run_output;
   write_mono_wave(&output_dir.join("aec-output.wav"), &aec_output)?;
 
-  let linear_output_report = write_linear_diagnostic(
-    &output_dir,
-    &aec_output,
-    linear_output.as_deref(),
-    linear_frames_available,
-    linear_frames_missing,
-  )?;
-
   let report = AecReport {
-    schema_version: 1,
+    schema_version: 2,
     source_run: config.run_dir.file_name().map_or_else(
       || config.run_dir.display().to_string(),
       |name| name.to_string_lossy().into(),
     ),
+    aec_implementation: AEC_IMPLEMENTATION,
+    aec_configuration: AEC_CONFIGURATION,
     sample_rate: SAMPLE_RATE,
     frame_samples: FRAME_SAMPLES,
     frames_processed: aec_output.len() / FRAME_SAMPLES,
@@ -262,7 +164,6 @@ fn process_internal(config: &AecConfig) -> Result<ProcessOutput> {
     microphone_offset_samples: aligned.microphone_offset_samples,
     render_offset_samples: aligned.render_offset_samples,
     microphone_minus_render_start_ms: aligned.microphone_minus_render_start_ms,
-    profile: config.profile,
     stream_delay_ms: config.stream_delay_ms,
     active_threshold_dbfs: config.active_threshold_dbfs,
     metrics: calculate_metrics(
@@ -273,21 +174,20 @@ fn process_internal(config: &AecConfig) -> Result<ProcessOutput> {
     ),
     active_frame_stats,
     final_stats: processor.get_stats().into(),
-    linear_output: linear_output_report,
   };
   let report_path = output_dir.join("aec-report.json");
   fs::write(&report_path, serde_json::to_vec_pretty(&report)?)
     .with_context(|| format!("failed to write {}", report_path.display()))?;
 
   print_report_summary(&report, &output_dir, &report_path);
-  Ok(ProcessOutput {
-    output_dir,
-    aec_output,
-  })
+  Ok(())
 }
 
 fn print_report_summary(report: &AecReport, output_dir: &Path, report_path: &Path) {
-  println!("AEC profile: {:?}", report.profile);
+  println!(
+    "AEC: {} ({})",
+    report.aec_implementation, report.aec_configuration
+  );
   println!(
     "Aligned microphone offset: {} samples",
     report.microphone_offset_samples
@@ -304,277 +204,7 @@ fn print_report_summary(report: &AecReport, output_dir: &Path, report_path: &Pat
     "AEC output: {}",
     output_dir.join("aec-output.wav").display()
   );
-  if let Some(linear) = &report.linear_output {
-    println!(
-      "Linear AEC output: {} ({} available, {} missing frames)",
-      output_dir.join(&linear.output_file).display(),
-      linear.frames_available,
-      linear.frames_missing
-    );
-    println!(
-      "16 kHz full AEC comparison: {}",
-      output_dir.join(&linear.comparison_output_file).display()
-    );
-  }
   println!("Report: {}", report_path.display());
-}
-
-fn write_linear_diagnostic(
-  output_dir: &Path,
-  fullband_output: &[f32],
-  linear_output: Option<&[f32]>,
-  frames_available: usize,
-  frames_missing: usize,
-) -> Result<Option<LinearOutputReport>> {
-  let Some(linear_output) = linear_output else {
-    return Ok(None);
-  };
-
-  let linear_file = "linear-aec-output-16khz.wav";
-  let comparison_file = "full-aec-output-16khz.wav";
-  write_mono_wave_at_rate(
-    &output_dir.join(linear_file),
-    linear_output,
-    LINEAR_SAMPLE_RATE,
-  )?;
-  write_mono_wave_at_rate(
-    &output_dir.join(comparison_file),
-    &downsample_48_to_16(fullband_output),
-    LINEAR_SAMPLE_RATE,
-  )?;
-  Ok(Some(LinearOutputReport {
-    sample_rate: LINEAR_SAMPLE_RATE,
-    frame_samples: LINEAR_AEC_OUTPUT_SAMPLES,
-    frames_available,
-    frames_missing,
-    output_file: linear_file.to_owned(),
-    comparison_output_file: comparison_file.to_owned(),
-  }))
-}
-
-pub fn build_blind_experiment(config: &BlindAecConfig) -> Result<()> {
-  if !config.active_threshold_dbfs.is_finite() {
-    bail!("active threshold must be finite");
-  }
-  let segments = config
-    .segments
-    .iter()
-    .map(|value| parse_segment(value))
-    .collect::<Result<Vec<_>>>()?;
-
-  let profiles = selected_blind_profiles(&config.profiles)?;
-  let mut outputs = Vec::with_capacity(profiles.len());
-  for profile in profiles {
-    let output = process_internal(&AecConfig {
-      run_dir: config.run_dir.clone(),
-      stream_delay_ms: None,
-      active_threshold_dbfs: config.active_threshold_dbfs,
-      profile,
-      export_linear: false,
-    })?;
-    outputs.push((profile, output));
-  }
-
-  let now = SystemTime::now()
-    .duration_since(UNIX_EPOCH)
-    .context("system clock is before the Unix epoch")?;
-  let experiment_id = now.as_nanos().to_string();
-  let experiment_dir = config
-    .run_dir
-    .join("processed")
-    .join(format!("blind-aec-{experiment_id}"));
-  fs::create_dir_all(&experiment_dir)
-    .with_context(|| format!("failed to create {}", experiment_dir.display()))?;
-
-  let order = randomized_profile_order(now, profiles);
-  let mut assignments = BTreeMap::new();
-  let mut files = Vec::with_capacity(order.len());
-  for (index, profile) in order.iter().enumerate() {
-    let label = char::from(b'A' + u8::try_from(index).expect("three labels fit u8"));
-    let file_name = format!("{label}.wav");
-    let source = outputs
-      .iter()
-      .find(|(candidate, _)| candidate == profile)
-      .expect("all blind profiles were processed");
-    let listening_audio = extract_segments(&source.1.aec_output, &segments)?;
-    write_mono_wave(&experiment_dir.join(&file_name), &listening_audio)?;
-    assignments.insert(
-      label.to_string(),
-      BlindAssignment {
-        profile: *profile,
-        source_report: source
-          .1
-          .output_dir
-          .join("aec-report.json")
-          .display()
-          .to_string(),
-      },
-    );
-    files.push(file_name);
-  }
-
-  let source_run = config.run_dir.file_name().map_or_else(
-    || config.run_dir.display().to_string(),
-    |name| name.to_string_lossy().into(),
-  );
-  let manifest = BlindManifest {
-    schema_version: 1,
-    source_run,
-    experiment_id: experiment_id.clone(),
-    segments,
-    files,
-  };
-  let manifest_path = experiment_dir.join("manifest.json");
-  fs::write(&manifest_path, serde_json::to_vec_pretty(&manifest)?)
-    .with_context(|| format!("failed to write {}", manifest_path.display()))?;
-
-  let answer_key = BlindAnswerKey {
-    schema_version: 1,
-    experiment_id: experiment_id.clone(),
-    assignments,
-  };
-  let answer_key_path = config
-    .run_dir
-    .join("processed")
-    .join(format!(".blind-aec-{experiment_id}-answer-key.json"));
-  fs::write(&answer_key_path, serde_json::to_vec_pretty(&answer_key)?)
-    .with_context(|| format!("failed to write {}", answer_key_path.display()))?;
-
-  println!("Blind listening directory: {}", experiment_dir.display());
-  println!("Listen to A.wav, B.wav, and C.wav without inspecting the answer key.");
-  Ok(())
-}
-
-fn create_processor(profile: AecProfile, export_linear: bool) -> Result<Processor> {
-  if profile == AecProfile::Default && !export_linear {
-    return Processor::new(SAMPLE_RATE).context("failed to create WebRTC processor");
-  }
-
-  let mut aec3_config = EchoCanceller3Config::default();
-  aec3_config.filter.export_linear_aec_output = export_linear;
-  apply_profile(&mut aec3_config, profile);
-  if !aec3_config.validate() {
-    bail!("AEC3 rejected the {profile:?} profile");
-  }
-  Processor::with_aec3_config(SAMPLE_RATE, aec3_config)
-    .context("failed to create WebRTC processor with experimental AEC3 config")
-}
-
-fn apply_profile(aec3_config: &mut EchoCanceller3Config, profile: AecProfile) {
-  match profile {
-    AecProfile::Default => {}
-    AecProfile::NearendStable => {
-      let detector = &mut aec3_config.suppressor.dominant_nearend_detection;
-      detector.trigger_threshold = 6;
-      detector.hold_duration = 200;
-    }
-    AecProfile::SpeechSafe => {
-      let tuning = &mut aec3_config.suppressor.nearend_tuning;
-      tuning.max_inc_factor = 4.0;
-      tuning.max_dec_factor_lf = 0.5;
-    }
-    AecProfile::RecoveryFast => {
-      aec3_config.suppressor.nearend_tuning.max_inc_factor = 4.0;
-    }
-    AecProfile::RecoveryFaster => {
-      aec3_config.suppressor.nearend_tuning.max_inc_factor = 8.0;
-    }
-    AecProfile::DropSmooth => {
-      aec3_config.suppressor.nearend_tuning.max_dec_factor_lf = 0.5;
-    }
-    AecProfile::NearendLfTransparent => {
-      let mask = &mut aec3_config.suppressor.nearend_tuning.mask_lf;
-      mask.enr_transparent = 1.29;
-      mask.enr_suppress = 1.3;
-    }
-    AecProfile::NearendHfTransparent => {
-      let mask = &mut aec3_config.suppressor.nearend_tuning.mask_hf;
-      mask.enr_transparent = 1.09;
-      mask.enr_suppress = 1.1;
-    }
-  }
-}
-
-fn parse_segment(value: &str) -> Result<ListeningSegment> {
-  let (start, end) = value
-    .split_once('-')
-    .with_context(|| format!("invalid segment {value:?}; expected START-END in seconds"))?;
-  let start_seconds = start
-    .parse::<f64>()
-    .with_context(|| format!("invalid segment start in {value:?}"))?;
-  let end_seconds = end
-    .parse::<f64>()
-    .with_context(|| format!("invalid segment end in {value:?}"))?;
-  if !start_seconds.is_finite()
-    || !end_seconds.is_finite()
-    || start_seconds < 0.0
-    || end_seconds <= start_seconds
-  {
-    bail!("invalid segment {value:?}; require finite 0 <= START < END");
-  }
-  Ok(ListeningSegment {
-    start_seconds,
-    end_seconds,
-  })
-}
-
-fn extract_segments(samples: &[f32], segments: &[ListeningSegment]) -> Result<Vec<f32>> {
-  let gap_samples = usize::try_from(SAMPLE_RATE / 4).expect("sample rate fits usize");
-  let mut output = Vec::new();
-  for (index, segment) in segments.iter().enumerate() {
-    let start = seconds_to_samples(segment.start_seconds)?;
-    let end = seconds_to_samples(segment.end_seconds)?;
-    if end > samples.len() {
-      bail!(
-        "segment {:.3}-{:.3} exceeds the processed recording",
-        segment.start_seconds,
-        segment.end_seconds
-      );
-    }
-    if index > 0 {
-      output.resize(output.len() + gap_samples, 0.0);
-    }
-    output.extend_from_slice(&samples[start..end]);
-  }
-  Ok(output)
-}
-
-fn seconds_to_samples(seconds: f64) -> Result<usize> {
-  let duration = Duration::try_from_secs_f64(seconds)
-    .with_context(|| format!("invalid non-negative time {seconds}"))?;
-  let samples = u128::from(duration.as_secs()) * u128::from(SAMPLE_RATE)
-    + u128::from(duration.subsec_nanos()) * u128::from(SAMPLE_RATE) / 1_000_000_000;
-  usize::try_from(samples).context("segment time exceeds addressable audio length")
-}
-
-fn selected_blind_profiles(requested: &[AecProfile]) -> Result<[AecProfile; 3]> {
-  let profiles = if requested.is_empty() {
-    vec![
-      AecProfile::Default,
-      AecProfile::NearendStable,
-      AecProfile::SpeechSafe,
-    ]
-  } else {
-    requested.to_vec()
-  };
-  if profiles.len() != 3 {
-    bail!("blind AEC experiments require exactly three profiles");
-  }
-  if profiles[0] == profiles[1] || profiles[0] == profiles[2] || profiles[1] == profiles[2] {
-    bail!("blind AEC experiment profiles must be unique");
-  }
-  profiles
-    .try_into()
-    .map_err(|_| anyhow::anyhow!("validated profile count did not fit A/B/C"))
-}
-
-fn randomized_profile_order(now: Duration, mut order: [AecProfile; 3]) -> [AecProfile; 3] {
-  let rotation = usize::try_from(now.as_nanos() % 3).expect("rotation is below three");
-  order.rotate_left(rotation);
-  if (now.as_nanos() / 3) % 2 == 1 {
-    order.swap(0, 1);
-  }
-  order
 }
 
 fn read_manifest(run_dir: &Path) -> Result<CaptureManifest> {
@@ -702,28 +332,11 @@ fn qpc_delta_ms(delta: u64) -> f64 {
       / f64::from(u32::try_from(QPC_TICKS_PER_SECOND).expect("QPC frequency fits u32"))
 }
 
-fn output_directory(
-  run_dir: &Path,
-  stream_delay_ms: Option<u16>,
-  profile: AecProfile,
-  export_linear: bool,
-) -> PathBuf {
-  let mut mode = stream_delay_ms.map_or_else(
-    || match profile {
-      AecProfile::Default => "aec-adaptive".to_owned(),
-      AecProfile::NearendStable => "aec-nearend-stable".to_owned(),
-      AecProfile::SpeechSafe => "aec-speech-safe".to_owned(),
-      AecProfile::RecoveryFast => "aec-recovery-fast".to_owned(),
-      AecProfile::RecoveryFaster => "aec-recovery-faster".to_owned(),
-      AecProfile::DropSmooth => "aec-drop-smooth".to_owned(),
-      AecProfile::NearendLfTransparent => "aec-nearend-lf-transparent".to_owned(),
-      AecProfile::NearendHfTransparent => "aec-nearend-hf-transparent".to_owned(),
-    },
-    |delay| format!("aec-delay-{delay}ms"),
+fn output_directory(run_dir: &Path, stream_delay_ms: Option<u16>) -> PathBuf {
+  let mode = stream_delay_ms.map_or_else(
+    || "aec-default-adaptive".to_owned(),
+    |delay| format!("aec-default-delay-{delay}ms"),
   );
-  if export_linear {
-    mode.push_str("-linear");
-  }
   run_dir.join("processed").join(mode)
 }
 
@@ -732,14 +345,9 @@ fn run_aec(
   microphone: &[f32],
   render: &[f32],
   active_threshold_dbfs: f64,
-  export_linear: bool,
 ) -> Result<AecRunOutput> {
   let threshold_power = 10_f64.powf(active_threshold_dbfs / 10.0);
   let mut output = Vec::with_capacity(microphone.len());
-  let mut linear_output = export_linear
-    .then(|| Vec::with_capacity(microphone.len() / (FRAME_SAMPLES / LINEAR_AEC_OUTPUT_SAMPLES)));
-  let mut linear_frames_available = 0;
-  let mut linear_frames_missing = 0;
   let mut active_stats = None;
 
   for (microphone_frame, render_frame) in microphone
@@ -757,25 +365,12 @@ fn run_aec(
       .context("WebRTC failed to process capture frame")?;
     output.extend_from_slice(&capture_channels[0]);
 
-    if let Some(linear_output) = &mut linear_output {
-      if let Some(linear_frame) = processor.get_linear_aec_output() {
-        linear_output.extend_from_slice(&linear_frame);
-        linear_frames_available += 1;
-      } else {
-        linear_output.resize(linear_output.len() + LINEAR_AEC_OUTPUT_SAMPLES, 0.0);
-        linear_frames_missing += 1;
-      }
-    }
-
     if mean_power(render_frame) > threshold_power {
       active_stats = Some(processor.get_stats().into());
     }
   }
   Ok(AecRunOutput {
     aec_output: output,
-    linear_output,
-    linear_frames_available,
-    linear_frames_missing,
     active_frame_stats: active_stats,
   })
 }
@@ -876,49 +471,6 @@ fn write_mono_wave_at_rate(path: &Path, samples: &[f32], sample_rate: u32) -> Re
     .with_context(|| format!("failed to finalize {}", path.display()))
 }
 
-fn downsample_48_to_16(samples: &[f32]) -> Vec<f32> {
-  const DECIMATION: usize = 3;
-  const FILTER_TAPS: usize = 63;
-  const FILTER_HALF: usize = FILTER_TAPS / 2;
-  const NORMALIZED_CUTOFF: f32 = 7_200.0 / 48_000.0;
-
-  let mut taps = [0.0; FILTER_TAPS];
-  for (index, tap) in taps.iter_mut().enumerate() {
-    let index = u16::try_from(index).expect("FIR tap index fits u16");
-    let half = u16::try_from(FILTER_HALF).expect("FIR half length fits u16");
-    let offset = f32::from(index) - f32::from(half);
-    let sinc = if offset.abs() < f32::EPSILON {
-      2.0 * NORMALIZED_CUTOFF
-    } else {
-      (2.0 * std::f32::consts::PI * NORMALIZED_CUTOFF * offset).sin()
-        / (std::f32::consts::PI * offset)
-    };
-    let window = 0.54 + 0.46 * (std::f32::consts::PI * offset / f32::from(half)).cos();
-    *tap = sinc * window;
-  }
-  let tap_sum: f32 = taps.iter().sum();
-  for tap in &mut taps {
-    *tap /= tap_sum;
-  }
-
-  let mut output = Vec::with_capacity(samples.len() / DECIMATION);
-  for output_index in 0..(samples.len() / DECIMATION) {
-    let center = output_index * DECIMATION;
-    let mut sample = 0.0;
-    for (tap_index, tap) in taps.iter().enumerate() {
-      let shifted_index = center + tap_index;
-      if shifted_index >= FILTER_HALF {
-        let source_index = shifted_index - FILTER_HALF;
-        if let Some(source_sample) = samples.get(source_index) {
-          sample += source_sample * tap;
-        }
-      }
-    }
-    output.push(sample);
-  }
-  output
-}
-
 impl From<Stats> for AecStats {
   fn from(stats: Stats) -> Self {
     Self {
@@ -934,17 +486,6 @@ impl From<Stats> for AecStats {
 #[cfg(test)]
 mod tests {
   use super::*;
-
-  #[test]
-  fn downsampling_preserves_length_and_steady_dc_level() {
-    let input = vec![1.0; FRAME_SAMPLES];
-    let output = downsample_48_to_16(&input);
-
-    assert_eq!(output.len(), LINEAR_AEC_OUTPUT_SAMPLES);
-    for sample in &output[16..(output.len() - 16)] {
-      assert!((sample - 1.0).abs() < 1e-5);
-    }
-  }
 
   #[test]
   fn qpc_delta_rounds_to_nearest_sample() {
@@ -963,101 +504,5 @@ mod tests {
     assert_eq!(aligned.microphone_offset_samples, 480);
     assert!((aligned.microphone[480] - 1.0).abs() < f32::EPSILON);
     assert!((aligned.render[0] - 2.0).abs() < f32::EPSILON);
-  }
-
-  #[test]
-  fn blind_profiles_default_to_the_original_experiment() {
-    assert_eq!(
-      selected_blind_profiles(&[]).unwrap(),
-      [
-        AecProfile::Default,
-        AecProfile::NearendStable,
-        AecProfile::SpeechSafe,
-      ]
-    );
-  }
-
-  #[test]
-  fn blind_profiles_require_three_unique_candidates() {
-    assert!(selected_blind_profiles(&[AecProfile::Default, AecProfile::RecoveryFast]).is_err());
-    assert!(selected_blind_profiles(&[
-      AecProfile::Default,
-      AecProfile::RecoveryFast,
-      AecProfile::RecoveryFast,
-    ])
-    .is_err());
-    assert_eq!(
-      selected_blind_profiles(&[
-        AecProfile::Default,
-        AecProfile::RecoveryFast,
-        AecProfile::DropSmooth,
-      ])
-      .unwrap(),
-      [
-        AecProfile::Default,
-        AecProfile::RecoveryFast,
-        AecProfile::DropSmooth,
-      ]
-    );
-  }
-
-  #[test]
-  fn transparent_profiles_change_only_the_selected_nearend_mask() {
-    let baseline = EchoCanceller3Config::default();
-
-    let mut low_frequency = baseline;
-    apply_profile(&mut low_frequency, AecProfile::NearendLfTransparent);
-    assert!(
-      (low_frequency
-        .suppressor
-        .nearend_tuning
-        .mask_lf
-        .enr_transparent
-        - 1.29)
-        .abs()
-        < f32::EPSILON
-    );
-    assert!(
-      (low_frequency.suppressor.nearend_tuning.mask_lf.enr_suppress - 1.3).abs() < f32::EPSILON
-    );
-    assert_eq!(
-      low_frequency.suppressor.nearend_tuning.mask_hf,
-      baseline.suppressor.nearend_tuning.mask_hf
-    );
-    assert_eq!(
-      low_frequency.suppressor.normal_tuning,
-      baseline.suppressor.normal_tuning
-    );
-
-    let mut high_frequency = baseline;
-    apply_profile(&mut high_frequency, AecProfile::NearendHfTransparent);
-    assert!(
-      (high_frequency
-        .suppressor
-        .nearend_tuning
-        .mask_hf
-        .enr_transparent
-        - 1.09)
-        .abs()
-        < f32::EPSILON
-    );
-    assert!(
-      (high_frequency
-        .suppressor
-        .nearend_tuning
-        .mask_hf
-        .enr_suppress
-        - 1.1)
-        .abs()
-        < f32::EPSILON
-    );
-    assert_eq!(
-      high_frequency.suppressor.nearend_tuning.mask_lf,
-      baseline.suppressor.nearend_tuning.mask_lf
-    );
-    assert_eq!(
-      high_frequency.suppressor.normal_tuning,
-      baseline.suppressor.normal_tuning
-    );
   }
 }

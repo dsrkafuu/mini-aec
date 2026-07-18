@@ -73,11 +73,6 @@ int process_capture_frame(AudioProcessing* ap,
                           const webrtc::StreamConfig& capture_stream_config,
                           float* const* channels);
 
-// Copies the most recently produced 10 ms mono linear AEC output at 16 kHz
-// into |output|. |output| must point to storage for 160 floats. Returns false
-// when linear AEC export is disabled or no output is available yet.
-bool get_linear_aec_output(AudioProcessing* ap, float* output);
-
 // Processes and optionally modifies the audio frame destined to a playback
 // device.
 // Each element in |channels| is an array of float representing a single-channel
