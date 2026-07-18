@@ -8,8 +8,8 @@ use anyhow::Result;
 use clap::{Args, Parser, Subcommand};
 
 #[derive(Debug, Parser)]
-#[command(name = "denoise-lab")]
-#[command(about = "Open Denoise audio capture and processing diagnostics")]
+#[command(name = "mini-aec-lab")]
+#[command(about = "MiniAEC audio capture and processing diagnostics")]
 struct Cli {
   #[command(subcommand)]
   command: Command,

@@ -1,6 +1,6 @@
 [package]
-name = "denoise-lab"
-description = "Diagnostic CLI for Open Denoise audio pipeline experiments"
+name = "mini-aec-lab"
+description = "Diagnostic CLI for the MiniAEC audio pipeline"
 edition.workspace = true
 license.workspace = true
 version.workspace = true

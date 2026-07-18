@@ -16,10 +16,10 @@ pub use windows::{capture, list_devices};
 
 #[cfg(not(windows))]
 pub fn list_devices(_json: bool) -> anyhow::Result<()> {
-  anyhow::bail!("denoise-lab currently supports Windows only")
+  anyhow::bail!("mini-aec-lab currently supports Windows only")
 }
 
 #[cfg(not(windows))]
 pub fn capture(_config: CaptureConfig) -> anyhow::Result<()> {
-  anyhow::bail!("denoise-lab currently supports Windows only")
+  anyhow::bail!("mini-aec-lab currently supports Windows only")
 }
