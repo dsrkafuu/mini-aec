@@ -20,8 +20,8 @@ example in NVIDIA Broadcast or the selected meeting application.
 - The virtual audio driver and real-time engine are not implemented yet. This
   repository does not currently produce a usable `MiniAEC Microphone` endpoint
   and is not a usable product release.
-- OpenSpec is intentionally not initialized yet. It will be introduced after
-  this repository baseline is accepted.
+- OpenSpec is initialized with the `spec-driven` schema and Codex integration.
+  There are no active changes or accepted capability specs yet.
 
 See [docs/technical-plan.md](docs/technical-plan.md) for the architecture and
 delivery gates. AEC provenance and upgrade rules live in

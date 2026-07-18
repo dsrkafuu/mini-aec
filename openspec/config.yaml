@@ -1,0 +1,41 @@
+schema: spec-driven
+
+context: |
+  Product: MiniAEC, a Windows 11 x64 hands-free acoustic echo canceller.
+  Stack: Rust workspace, windowless Tauri 2 system-tray host, WASAPI,
+  WebRTC AEC3 M131, and a future Windows WDK virtual audio driver.
+  Audio path: physical microphone plus physical render loopback into AEC,
+  then processed PCM into the bundled "MiniAEC Microphone" endpoint.
+  Scope: AEC only. Noise suppression, automatic gain control, equalization,
+  dereverberation, and voice enhancement are downstream responsibilities.
+  Platform: Windows only. User-space product code is Rust; WDK driver code may
+  use the C/C++ required by Microsoft samples and tooling.
+  UI: system tray and context menu only; no WebView or settings frontend.
+  AEC policy: keep the frozen FreeDesktop WebRTC M131 snapshot and upstream
+  default AEC3 configuration until a measured blocker and explicit approval
+  justify an experiment or upgrade.
+  Architecture: keep Tauri, the real-time engine, WASAPI, EchoCanceller, and
+  virtual microphone transport behind replaceable project-owned boundaries.
+  Privacy: artifacts/ contains private local recordings and must never be
+  staged, committed, uploaded, or deleted without an explicit request.
+  Required project context: read AGENTS.md, docs/technical-plan.md,
+  docs/aec-baseline.md, vendor/UPSTREAM.md, and
+  docs/upstream-upgrade-plan.md before audio or dependency changes.
+  Workflow: conventional commits; specifications and design before code;
+  identical-input comparison for algorithm changes.
+
+rules:
+  proposal:
+    - State explicit goals and non-goals.
+    - Identify affected capabilities and Windows driver or distribution impact.
+    - Do not include implementation details that belong in design.md.
+  design:
+    - Preserve replaceable tray, engine, WASAPI, EchoCanceller, and virtual microphone boundaries.
+    - Record real-time, failure-recovery, signing, security, migration, and rollback decisions where applicable.
+  specs:
+    - Write observable requirements with testable normal, failure, and recovery scenarios.
+    - Treat MiniAEC Microphone end-to-end behavior as the product acceptance surface.
+  tasks:
+    - Keep documentation, implementation, and verification tasks distinct.
+    - Do not mark a task complete before its stated verification passes.
+    - Never include deletion, staging, or upload of artifacts/ recordings.

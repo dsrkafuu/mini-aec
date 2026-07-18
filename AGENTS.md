@@ -10,6 +10,7 @@ driver, or validation code, read:
 3. `vendor/UPSTREAM.md`
 4. `docs/upstream-upgrade-plan.md`
 5. `driver/windows/README.md` for driver work
+6. `openspec/config.yaml` and the applicable generated OpenSpec skill for SDD work
 
 ## Product contract
 
@@ -42,7 +43,9 @@ driver, or validation code, read:
   Git but they are not current directions.
 - The virtual microphone, real-time engine, installer, and driver signing flow
   are not implemented.
-- OpenSpec is intentionally not initialized. Do not add it until the user asks.
+- OpenSpec is initialized with the `spec-driven` schema and Codex integration.
+  Use its generated workflow for future changes, but do not create a change
+  unless the user asks to start or specify one.
 
 ## AEC dependency rules
 

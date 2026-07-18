@@ -227,6 +227,8 @@ mini-aec/
 - 驱动安装、更新和卸载需要明确授权及回滚路径；
 - 第三方源码、模型或测试素材必须记录版本、来源、许可证和 hash。
 
-## 10. SDD 交接点
+## 10. SDD 状态
 
-当前仓库故意不包含 OpenSpec 文件。仓库基线由用户确认后，再初始化 SDD，并把 M1 虚拟麦克风数据通路 spike 作为第一个规格化变更；不能在引入前预生成 proposal、spec、design 或 task 文件。
+仓库已经使用 OpenSpec 的 `spec-driven` schema 和 Codex 集成完成初始化，项目约束记录在 `openspec/config.yaml`。当前没有 active change，也没有 accepted capability spec。
+
+初始化本身不启动新功能。由用户确认进入下一项工作后，再通过 OpenSpec 创建对应 change；M1 虚拟麦克风数据通路 spike 是当前建议的第一个规格化变更，但不能在用户发起前预生成 proposal、spec、design 或 tasks。
