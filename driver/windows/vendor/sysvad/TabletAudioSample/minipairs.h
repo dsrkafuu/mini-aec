@@ -34,6 +34,8 @@ Abstract:
 #include "micintopo.h"
 #include "micintoptable.h"
 #include "micinwavtable.h"
+#include "../../../mini-aec/MiniAecProtocol.h"
+#include "../../../mini-aec/MiniAecWaveTable.h"
 
 #include "micarraytopo.h"
 #include "micarray1toptable.h"
@@ -363,8 +365,8 @@ ENDPOINT_MINIPAIR MicInMiniports =
     &MicInWaveMiniportFilterDescriptor,
     0, NULL,                                // Interface properties
     MICIN_DEVICE_MAX_CHANNELS,
-    MicInPinDeviceFormatsAndModes,
-    SIZEOF_ARRAY(MicInPinDeviceFormatsAndModes),
+    MiniAecPinDeviceFormatsAndModes,
+    SIZEOF_ARRAY(MiniAecPinDeviceFormatsAndModes),
     MicInTopologyPhysicalConnections,
     SIZEOF_ARRAY(MicInTopologyPhysicalConnections),
     ENDPOINT_NO_FLAGS,
@@ -509,10 +511,7 @@ ENDPOINT_MINIPAIR MicArray3Miniports =
 static
 PENDPOINT_MINIPAIR  g_RenderEndpoints[] = 
 {
-    &SpeakerMiniports,
-    &SpeakerHpMiniports,
-    &HdmiMiniports,
-    &SpdifMiniports,
+    NULL,
 };
 
 #define g_cRenderEndpoints  (SIZEOF_ARRAY(g_RenderEndpoints))
@@ -525,9 +524,6 @@ static
 PENDPOINT_MINIPAIR  g_CaptureEndpoints[] = 
 {
     &MicInMiniports,
-    &MicArray1Miniports,
-    &MicArray2Miniports,
-    &MicArray3Miniports,
 };
 
 #define g_cCaptureEndpoints (SIZEOF_ARRAY(g_CaptureEndpoints))

@@ -16,20 +16,20 @@
 
 ## 3. Restricted Driver Ingress and Ring Buffer
 
-- [ ] 3.1 Adapt the pinned SysVAD source to expose exactly one public capture endpoint named `MiniAEC Microphone` plus a private driver control interface that is not an audio endpoint.
-- [ ] 3.2 Restrict the validation control interface to SYSTEM and Administrators, allow one active sender session, and cleanly release the session when its control handle closes or its process exits.
-- [ ] 3.3 Define and implement the versioned fixed-frame control protocol with protocol version, lengths, session identity, monotonic frame sequence and exactly 960 bytes of PCM payload per request.
-- [ ] 3.4 Validate every request before copying, reject unsupported versions, malformed lengths, stale sessions, partial frames and non-monotonic sequences, and return actionable status codes.
-- [ ] 3.5 Implement a synchronized driver-owned nonpaged ring buffer with capacity for 10 complete frames, no user-mode mapping and no partial-frame visibility across wraparound.
-- [ ] 3.6 Implement audio-clock-driven capture consumption, zero-valued underrun output, oldest-frame discard on overflow, atomic old-session flush and diagnostics for depth, high-water mark, underrun, overflow, discarded frames and rejected writes.
+- [x] 3.1 Adapt the pinned SysVAD source to expose exactly one public capture endpoint named `MiniAEC Microphone` plus a private driver control interface that is not an audio endpoint.
+- [x] 3.2 Restrict the validation control interface to SYSTEM and Administrators, allow one active sender session, and cleanly release the session when its control handle closes or its process exits.
+- [x] 3.3 Define and implement the versioned fixed-frame control protocol with protocol version, lengths, session identity, monotonic frame sequence and exactly 960 bytes of PCM payload per request.
+- [x] 3.4 Validate every request before copying, reject unsupported versions, malformed lengths, stale sessions, partial frames and non-monotonic sequences, and return actionable status codes.
+- [x] 3.5 Implement a synchronized driver-owned nonpaged ring buffer with capacity for 10 complete frames, no user-mode mapping and no partial-frame visibility across wraparound.
+- [x] 3.6 Implement audio-clock-driven capture consumption, zero-valued underrun output, oldest-frame discard on overflow, atomic old-session flush and diagnostics for depth, high-water mark, underrun, overflow, discarded frames and rejected writes.
 
 ## 4. User-mode Adapter and Non-system Tests
 
-- [ ] 4.1 Implement the Windows `VirtualMicrophoneSink` adapter for the private control protocol and map access denial, driver absence, busy sender, version mismatch and rejected writes into project-owned errors.
-- [ ] 4.2 Extend the versioned diagnostics contract and sender logging with discarded-frame, current-depth and high-water-mark fields while preserving session and frame correlation.
-- [ ] 4.3 Add driver-boundary tests for malformed requests, ring wraparound, empty and full transitions, oldest-frame overflow discard, sender cleanup and new-session isolation.
-- [ ] 4.4 Add user-mode tests for protocol encoding, session open and close, monotonic sequence enforcement, error mapping and deterministic sender behavior without installing the driver.
-- [ ] 4.5 Build the x64 Debug test-signable driver package and sender from a clean checkout, verify the package declares no producer-only audio endpoint, and keep generated packages and certificates outside version control.
+- [x] 4.1 Implement the Windows `VirtualMicrophoneSink` adapter for the private control protocol and map access denial, driver absence, busy sender, version mismatch and rejected writes into project-owned errors.
+- [x] 4.2 Extend the versioned diagnostics contract and sender logging with discarded-frame, current-depth and high-water-mark fields while preserving session and frame correlation.
+- [x] 4.3 Add driver-boundary tests for malformed requests, ring wraparound, empty and full transitions, oldest-frame overflow discard, sender cleanup and new-session isolation.
+- [x] 4.4 Add user-mode tests for protocol encoding, session open and close, monotonic sequence enforcement, error mapping and deterministic sender behavior without installing the driver.
+- [x] 4.5 Build the x64 Debug test-signable driver package and sender from a clean checkout, verify the package declares no producer-only audio endpoint, and keep generated packages and certificates outside version control.
 
 ## 5. Approved Driver Lifecycle Validation
 
@@ -43,6 +43,6 @@
 
 ## 6. Documentation and Final Acceptance
 
-- [ ] 6.1 Add a read-only-by-default validation entry point that prints planned system changes and requires explicit confirmation before test certificate, driver, restart or uninstall operations.
-- [ ] 6.2 Update `driver/windows/README.md`, `driver/windows/VALIDATION.md` and relevant architecture documentation with the fixed private control-interface transport, complete product signal-path diagram, fixed PCM protocol, 10-frame buffer, overflow policy, diagnostics, development-only signing limits and deferred production concerns.
+- [x] 6.1 Add a read-only-by-default validation entry point that prints planned system changes and requires explicit confirmation before test certificate, driver, restart or uninstall operations.
+- [x] 6.2 Update `driver/windows/README.md`, `driver/windows/VALIDATION.md` and relevant architecture documentation with the fixed private control-interface transport, complete product signal-path diagram, fixed PCM protocol, 10-frame buffer, overflow policy, diagnostics, development-only signing limits and deferred production concerns.
 - [ ] 6.3 Record clean-checkout commands, environment, evidence paths, pass/fail results and unresolved limitations, run the required workspace checks, and confirm that no generated driver package, certificate private key or private recording is committed.

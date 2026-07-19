@@ -92,12 +92,9 @@ WebRTC、WASAPI、Tauri 和驱动通信类型不能泄漏到这些项目级合�
 
 驱动基于固定版本的 Microsoft SysVAD，使用 WDK 所需的 C/C++。公共 capture endpoint 名称固定为 `MiniAEC Microphone`。
 
-驱动数据通路必须先做独立 spike，在以下方向中基于证据选择：
+当前验证实现已选择受限控制设备加驱动自有有界环形缓冲。用户态通过仅允许 SYSTEM 和 Administrators 访问的非音频控制接口提交固定 10 ms PCM 帧，驱动只公开 `MiniAEC Microphone` capture endpoint；私有 WaveRT render sink 因无法可靠满足普通应用不可枚举的约束而在设计阶段排除。
 
-1. 私有 WaveRT render sink 与 capture endpoint 的驱动内转发；
-2. 受限控制设备加有界共享环形缓冲。
-
-选择标准是单一公开 capture endpoint、稳定 48 kHz 连续流、低延迟、进程崩溃恢复、权限面和驱动复杂度。选型前不把任一路径写成既定事实。
+控制协议固定为 48 kHz、单声道、PCM16、每帧 480 samples/960 bytes。驱动的 10 帧非分页环形缓冲不映射到用户态：欠载输出零值静音，溢出丢弃最旧未消费完整帧并保留最新帧，新会话原子清空旧 PCM。协议版本、会话 ID、单调序列、当前深度、高水位、拒绝写入、欠载、溢出和丢弃帧均可诊断。
 
 ## 3. 音频合同
 

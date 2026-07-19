@@ -8,8 +8,8 @@ MiniAEC intentionally stops at AEC. Noise suppression, automatic gain control, e
 
 - The application is a windowless Tauri 2 Rust process with a Windows tray menu. The audio-related entries are disabled until the real-time engine is connected.
 - `mini-aec-lab` can enumerate Windows endpoints, capture a physical microphone and WASAPI render loopback together, align them by QPC timestamps, and run the frozen default WebRTC AEC3 baseline offline.
-- The virtual audio driver and real-time engine are not implemented yet. This repository does not currently produce a usable `MiniAEC Microphone` endpoint and is not a usable product release.
-- OpenSpec is initialized with the `spec-driven` schema and Codex integration. There are no active changes or accepted capability specs yet.
+- A pinned SysVAD-derived validation driver, private control-interface adapter, and deterministic PCM sender now build without installing anything. The end-to-end `MiniAEC Microphone` path still requires approved test-signing and Windows Recorder validation, and the real-time engine is not implemented.
+- OpenSpec is initialized with the `spec-driven` schema and Codex integration. The active `validate-virtual-microphone-transport` change tracks the first driver data-path validation.
 
 See [docs/technical-plan.md](docs/technical-plan.md) for the architecture and delivery gates. AEC provenance and upgrade rules live in [vendor/UPSTREAM.md](vendor/UPSTREAM.md) and [docs/upstream-upgrade-plan.md](docs/upstream-upgrade-plan.md).
 
@@ -18,6 +18,8 @@ See [docs/technical-plan.md](docs/technical-plan.md) for the architecture and de
 ```text
 src-tauri/                 windowless Tauri tray host
 crates/mini-aec-lab/       capture and offline AEC validation CLI
+crates/mini-aec-sender/    deterministic virtual microphone validation sender
+crates/mini-aec-windows-transport/ private Windows driver adapter
 driver/windows/            MiniAEC Microphone driver boundary and provenance
 docs/                      active architecture and validation contracts
 vendor/                    pinned Windows build layer for WebRTC AEC3

@@ -26,6 +26,7 @@ Abstract:
 
 #include "simple.h"
 #include "minipairs.h"
+#include "../../mini-aec/MiniAecTransport.h"
 #ifdef SYSVAD_BTH_BYPASS
 #include "bthhfpminipairs.h"
 #endif // SYSVAD_BTH_BYPASS
@@ -332,6 +333,8 @@ Environment:
     {
         goto Done;
     }
+
+    MiniAecTransportShutdown(DriverObject);
     
     //
     // Invoke first the port unload.
@@ -578,6 +581,12 @@ Return Value:
         DPF(D_ERROR, ("PcInitializeAdapterDriver failed, 0x%x", ntStatus)),
         Done);
 
+    ntStatus = MiniAecTransportInitialize(DriverObject);
+    IF_FAILED_ACTION_JUMP(
+        ntStatus,
+        DPF(D_ERROR, ("MiniAecTransportInitialize failed, 0x%x", ntStatus)),
+        Done);
+
     //
     // To intercept stop/remove/surprise-remove.
     //
@@ -598,6 +607,8 @@ Done:
 
     if (!NT_SUCCESS(ntStatus))
     {
+        MiniAecTransportShutdown(DriverObject);
+
         if (WdfGetDriver() != NULL)
         {
             WdfDriverMiniportUnload(WdfGetDriver());
@@ -859,6 +870,10 @@ InstallAllRenderFilters(
 
     for(ULONG i = 0; i < g_cRenderEndpoints; ++i, ++ppAeMiniports)
     {
+        if (*ppAeMiniports == NULL)
+        {
+            continue;
+        }
         ntStatus = InstallEndpointRenderFilters(_pDeviceObject, _pIrp, _pAdapterCommon, *ppAeMiniports);
         IF_FAILED_JUMP(ntStatus, Exit);
     }

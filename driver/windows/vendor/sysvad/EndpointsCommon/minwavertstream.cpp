@@ -4,6 +4,7 @@
 #include "simple.h"
 #include "minwavert.h"
 #include "minwavertstream.h"
+#include "../../../mini-aec/MiniAecTransport.h"
 #include "UnittestData.h"
 #include "AudioModuleHelper.h"
 #define MINWAVERTSTREAM_POOLTAG 'SRWM'
@@ -1502,7 +1503,7 @@ VOID CMiniportWaveRTStream::WriteBytes
 
 Routine Description:
 
-This function writes the audio buffer using a sine wave generator
+This function writes the audio buffer using the MiniAEC transport.
 Arguments:
 
 ByteDisplacement - # of bytes to process.
@@ -1516,7 +1517,7 @@ ByteDisplacement - # of bytes to process.
     while (ByteDisplacement > 0)
     {
         ULONG runWrite = min(ByteDisplacement, m_ulDmaBufferSize - bufferOffset);
-            m_ToneGenerator.GenerateSine(m_pDmaBuffer + bufferOffset, runWrite);
+        MiniAecTransportReadCapture(m_pDmaBuffer + bufferOffset, runWrite);
         bufferOffset = (bufferOffset + runWrite) % m_ulDmaBufferSize;
         ByteDisplacement -= runWrite;
     }

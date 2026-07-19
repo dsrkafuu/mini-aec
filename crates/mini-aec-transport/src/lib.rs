@@ -7,7 +7,7 @@ use std::error::Error;
 use std::fmt::{self, Display, Formatter};
 
 /// Version of the diagnostics snapshot contract.
-pub const DIAGNOSTICS_SCHEMA_VERSION: u16 = 1;
+pub const DIAGNOSTICS_SCHEMA_VERSION: u16 = 2;
 
 /// Number of PCM samples in one 10 ms mono frame.
 pub const FRAME_SAMPLES: usize = 480;
@@ -147,6 +147,7 @@ impl WriteReceipt {
 pub enum SinkErrorKind {
   AccessDenied,
   DriverUnavailable,
+  Busy,
   VersionMismatch,
   InvalidState,
   InvalidFormat,
@@ -198,7 +199,7 @@ pub enum SessionState {
   Open,
 }
 
-/// Monotonic counters common to both transport candidates.
+/// Monotonic counters emitted by the `MiniAEC` driver transport.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct DiagnosticCounters {
   pub session_opens: u64,
@@ -208,6 +209,7 @@ pub struct DiagnosticCounters {
   pub rejected_writes: u64,
   pub underruns: u64,
   pub overflows: u64,
+  pub discarded_frames: u64,
   pub driver_restarts: u64,
 }
 
@@ -218,6 +220,8 @@ pub struct SinkDiagnostics {
   pub state: SessionState,
   pub active_session: Option<SessionId>,
   pub last_accepted_sequence: Option<u64>,
+  pub current_depth: u32,
+  pub high_water_mark: u32,
   pub counters: DiagnosticCounters,
 }
 
@@ -228,6 +232,8 @@ impl Default for SinkDiagnostics {
       state: SessionState::Closed,
       active_session: None,
       last_accepted_sequence: None,
+      current_depth: 0,
+      high_water_mark: 0,
       counters: DiagnosticCounters::default(),
     }
   }
@@ -296,6 +302,7 @@ mod tests {
     let cases = [
       SinkErrorKind::AccessDenied,
       SinkErrorKind::DriverUnavailable,
+      SinkErrorKind::Busy,
       SinkErrorKind::VersionMismatch,
       SinkErrorKind::InvalidState,
       SinkErrorKind::InvalidFormat,

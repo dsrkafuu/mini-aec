@@ -9,6 +9,7 @@ use mini_aec_transport::{
   PcmFormat, PcmFrame, SessionConfig, SessionId, SessionState, SinkDiagnostics, SinkError,
   SinkErrorKind, VirtualMicrophoneSink, WriteReceipt,
 };
+use mini_aec_windows_transport::WindowsVirtualMicrophoneSink;
 use serde::Serialize;
 
 #[derive(Debug, Parser)]
@@ -23,13 +24,16 @@ struct Cli {
   #[arg(long)]
   session_id: Option<u128>,
 
-  /// Adapter to open. Driver candidates are added here after their isolated implementations exist.
+  /// Adapter to open.
   #[arg(long, value_enum, default_value_t = Transport::DryRun)]
   transport: Transport,
 }
 
 #[derive(Clone, Copy, Debug, ValueEnum)]
 enum Transport {
+  /// Send frames to the installed `MiniAEC` validation driver.
+  Driver,
+
   /// Validate generation, pacing and logs without writing audio to a driver.
   DryRun,
 }
@@ -56,6 +60,9 @@ enum SenderEvent {
     rejected_writes: u64,
     underruns: u64,
     overflows: u64,
+    discarded_frames: u64,
+    current_depth: u32,
+    high_water_mark: u32,
     driver_restarts: u64,
   },
   SessionClosed {
@@ -90,6 +97,12 @@ fn run() -> Result<()> {
     .context("requested duration is too large")?;
 
   match cli.transport {
+    Transport::Driver => send(
+      &mut WindowsVirtualMicrophoneSink::connect()
+        .context("failed to connect to the MiniAEC validation driver")?,
+      session_id,
+      total_frames,
+    ),
     Transport::DryRun => send(&mut DryRunSink::default(), session_id, total_frames),
   }
 }
@@ -152,6 +165,9 @@ fn send(
     rejected_writes: diagnostics.counters.rejected_writes,
     underruns: diagnostics.counters.underruns,
     overflows: diagnostics.counters.overflows,
+    discarded_frames: diagnostics.counters.discarded_frames,
+    current_depth: diagnostics.current_depth,
+    high_water_mark: diagnostics.high_water_mark,
     driver_restarts: diagnostics.counters.driver_restarts,
   })?;
   emit(&SenderEvent::SessionClosed {

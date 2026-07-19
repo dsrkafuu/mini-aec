@@ -11,6 +11,13 @@ $scriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 $driverRoot = Split-Path -Parent $scriptRoot
 $destinationRoot = Join-Path $driverRoot 'vendor\sysvad'
 $sourceRoot = Join-Path $checkout 'audio\sysvad'
+$allowedLocalPatches = @(
+    'adapter.cpp',
+    'EndpointsCommon/minwavertstream.cpp',
+    'TabletAudioSample/micinwavtable.h',
+    'TabletAudioSample/minipairs.h',
+    'TabletAudioSample/TabletAudioSample.vcxproj'
+)
 
 $actualCommit = (& git -C $checkout rev-parse HEAD).Trim()
 if ($LASTEXITCODE -ne 0 -or $actualCommit -ne $expectedCommit) {
@@ -43,6 +50,9 @@ foreach ($entry in $expected) {
 $actualByPath = @{}
 foreach ($file in Get-ChildItem -LiteralPath $destinationRoot -Recurse -File) {
     $relative = [System.IO.Path]::GetRelativePath($destinationRoot, $file.FullName).Replace('\', '/')
+    if ($relative -match '(^|/)(x64|ARM64)(/|$)') {
+        continue
+    }
     $actualByPath[$relative] = $file.FullName
 }
 
@@ -61,8 +71,10 @@ foreach ($relative in $expectedByPath.Keys) {
     }
 }
 
-if ($mismatched.Count -gt 0) {
-    throw "Imported file contents differ from the pinned source: $($mismatched -join ', ')."
+$unexpectedMismatches = @($mismatched | Where-Object { $_ -notin $allowedLocalPatches } | Sort-Object)
+$missingPatches = @($allowedLocalPatches | Where-Object { $_ -notin $mismatched } | Sort-Object)
+if ($unexpectedMismatches.Count -gt 0 -or $missingPatches.Count -gt 0) {
+    throw "Imported file contents differ from the pinned source outside the patch ledger. Unexpected mismatches: $($unexpectedMismatches -join ', '); recorded patches not present: $($missingPatches -join ', ')."
 }
 
-Write-Host "Verified $($expectedByPath.Count) imported files against SysVAD commit $expectedCommit."
+Write-Host "Verified $($expectedByPath.Count) imported files against SysVAD commit $expectedCommit with $($allowedLocalPatches.Count) recorded local patches."

@@ -21,13 +21,13 @@ Abstract:
 #define MICIN_DEVICE_MAX_CHANNELS           1       // Max Channels.
 #define MICIN_MIN_BITS_PER_SAMPLE_PCM       16      // Min Bits Per Sample
 #define MICIN_MAX_BITS_PER_SAMPLE_PCM       16      // Max Bits Per Sample
-#define MICIN_MIN_SAMPLE_RATE               8000    // Min Sample Rate
+#define MICIN_MIN_SAMPLE_RATE               48000   // Min Sample Rate
 #define MICIN_MAX_SAMPLE_RATE               48000   // Max Sample Rate
 
 //
 // Max # of pin instances.
 //
-#define MICIN_MAX_INPUT_STREAMS             5
+#define MICIN_MAX_INPUT_STREAMS             1
 
 //=============================================================================
 static 

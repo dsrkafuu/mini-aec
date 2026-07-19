@@ -1,0 +1,13 @@
+[package]
+name = "mini-aec-windows-transport"
+description = "Windows private control-interface adapter for MiniAEC Microphone"
+edition.workspace = true
+license.workspace = true
+version.workspace = true
+
+[dependencies]
+mini-aec-transport = { path = "../mini-aec-transport" }
+
+[lints.clippy]
+all = "warn"
+pedantic = "warn"

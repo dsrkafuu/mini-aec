@@ -42,13 +42,19 @@ No imported source, license, or notice file comes from `microsoft/audio`, a thir
 
 ## Local patch ledger
 
-The baseline import contains no edits to upstream files. Project-owned files outside `driver/windows/vendor/sysvad` currently provide only:
+The original baseline import was byte-identical to upstream. The active validation transport now contains the following recorded changes:
 
 1. `driver/windows/scripts/preflight.ps1`: read-only Windows, Visual Studio, complete SDK, WDK, x64 MSBuild, Spectre library, and SignTool discovery, including enforcement of a matching SDK/WDK build number.
 2. `driver/windows/scripts/build-baseline.ps1`: explicitly selects the matching SDK/WDK version and builds the retained x64 Debug projects in dependency order with the x64 MSBuild host and `SignMode=Off`; it does not install a certificate or driver.
 3. `driver/windows/scripts/verify-upstream.ps1`: verifies the temporary checkout commit, exact imported-file set, and SHA-256 content equality without changing either tree.
 4. `driver/windows/.gitattributes`: disables Git whitespace diagnostics only for byte-identical vendored SysVAD files because the Microsoft snapshot contains existing trailing whitespace that MiniAEC must not normalize silently.
 5. `driver/windows/.gitignore`: excludes generated WDK output, driver binaries, and development signing material.
+6. `driver/windows/mini-aec/MiniAecProtocol.h`, `MiniAecTransport.h`, `MiniAecTransport.cpp`, `MiniAecWaveTable.h`, and `MiniAECValidation.inx`: project-owned fixed-frame protocol, SYSTEM/Administrators-only control device, single-sender lifecycle, 10-frame driver-owned ring, capture-clock reader, 48 kHz mono PCM16 native format, diagnostics schema, and one-endpoint development INF for OpenSpec tasks 3.1 through 3.6.
+7. `driver/windows/vendor/sysvad/adapter.cpp`: initializes and shuts down the project-owned control transport around PortCls, preserves the original PortCls dispatch functions for non-control devices, and skips the deliberate null render miniport entry so the driver installs no render endpoint; validates OpenSpec tasks 3.1 and 3.2.
+8. `driver/windows/vendor/sysvad/EndpointsCommon/minwavertstream.cpp`: replaces the sample capture tone generator at the WaveRT audio-clock write point with bounded reads from the project-owned transport; validates OpenSpec task 3.6.
+9. `driver/windows/vendor/sysvad/TabletAudioSample/minipairs.h` and `micinwavtable.h`: retain only the MicIn capture miniport, select the project-owned 48 kHz mono PCM16 format table, and limit the validation miniport to one capture stream; validates OpenSpec tasks 3.1 and 3.3.
+10. `driver/windows/vendor/sysvad/TabletAudioSample/TabletAudioSample.vcxproj`: compiles the project-owned transport, links `wdmsec.lib`, disables unused Bluetooth and USB sideband endpoint initialization, and packages only the project-owned MiniAEC validation INF; validates OpenSpec tasks 3.1, 3.2, and 4.5.
+11. `driver/windows/scripts/verify-upstream.ps1`: continues to require the exact imported file set and byte equality for every unmodified file while allowing only the five vendored paths listed above to differ from the pinned commit.
 
 Every future edit beneath `driver/windows/vendor/sysvad` must be added here with the affected paths, purpose, behavioral impact, and a link to the validating OpenSpec task. Build adaptations should remain in project-owned scripts or project files when possible.
 
