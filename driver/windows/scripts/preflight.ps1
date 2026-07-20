@@ -25,6 +25,23 @@ function Get-VersionDirectories {
     return @(Get-ChildItem -LiteralPath $Path -Directory | Where-Object { $_.Name -match '^10\.0\.\d+\.\d+$' } | Sort-Object { [version]$_.Name } | ForEach-Object { $_.Name })
 }
 
+function Get-VsWhereProperty {
+    param(
+        [string]$Path,
+        [string]$Property
+    )
+
+    $values = @(& $Path -latest -products '*' -requires Microsoft.Component.MSBuild -property $Property -utf8)
+    if ($LASTEXITCODE -ne 0) {
+        return $null
+    }
+    $value = $values | Select-Object -First 1
+    if ([string]::IsNullOrWhiteSpace($value)) {
+        return $null
+    }
+    return $value.Trim()
+}
+
 $windowsKey = Get-ItemProperty -LiteralPath 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion'
 $windowsProductName = $windowsKey.ProductName
 if ([int]$windowsKey.CurrentBuildNumber -ge 22000 -and $windowsProductName -like 'Windows 10*') {
@@ -43,14 +60,14 @@ $msbuildPath = $null
 $msbuildArchitecture = $null
 
 if ($vswhere) {
-    $installationJson = & $vswhere -latest -products '*' -requires Microsoft.Component.MSBuild -format json -utf8
-    $installation = @($installationJson | ConvertFrom-Json) | Select-Object -First 1
-    if ($installation) {
-        $visualStudio = "{0} ({1})" -f $installation.displayName, $installation.installationVersion
-        $visualStudioPath = $installation.installationPath
+    $visualStudioPath = Get-VsWhereProperty -Path $vswhere -Property 'installationPath'
+    $visualStudioName = Get-VsWhereProperty -Path $vswhere -Property 'displayName'
+    $visualStudioVersion = Get-VsWhereProperty -Path $vswhere -Property 'installationVersion'
+    if ($visualStudioPath) {
+        $visualStudio = "{0} ({1})" -f $visualStudioName, $visualStudioVersion
         foreach ($candidate in @(
-            @{ Path = (Join-Path $installation.installationPath 'MSBuild\Current\Bin\amd64\MSBuild.exe'); Architecture = 'x64' },
-            @{ Path = (Join-Path $installation.installationPath 'MSBuild\Current\Bin\MSBuild.exe'); Architecture = 'x86' }
+            @{ Path = (Join-Path $visualStudioPath 'MSBuild\Current\Bin\amd64\MSBuild.exe'); Architecture = 'x64' },
+            @{ Path = (Join-Path $visualStudioPath 'MSBuild\Current\Bin\MSBuild.exe'); Architecture = 'x86' }
         )) {
             if (-not $msbuildPath -and (Test-Path -LiteralPath $candidate.Path -PathType Leaf)) {
                 $msbuildPath = $candidate.Path
