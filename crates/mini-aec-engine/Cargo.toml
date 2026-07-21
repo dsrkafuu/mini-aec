@@ -1,0 +1,19 @@
+[package]
+name = "mini-aec-engine"
+description = "Tauri-independent real-time audio engine for MiniAEC"
+edition.workspace = true
+license.workspace = true
+version.workspace = true
+
+[features]
+test-support = []
+
+[dependencies]
+mini-aec-transport = { path = "../mini-aec-transport" }
+serde = { version = "1.0.228", features = ["derive"] }
+
+[target.'cfg(windows)'.dependencies]
+wasapi = "0.23.0"
+
+[lints]
+workspace = true

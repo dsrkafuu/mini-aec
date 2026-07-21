@@ -1,6 +1,6 @@
 # MiniAEC 技术方案
 
-状态：仓库准备基线，尚非可用产品
+状态：M1 虚拟麦克风数据通路已验证；M2 实时 bypass 已通过开发期 elevated 路径验收，尚非可用 AEC 产品
 
 目标平台：Windows 11 x64
 
@@ -67,7 +67,7 @@ Tauri 只负责进程生命周期和低频控制面：
 
 ### 2.2 Rust 音频引擎
 
-未来的 `crates/mini-aec-engine/` 负责设备生命周期、预分配缓冲、格式转换、同步、10 ms 调度、AEC 编排、虚拟麦克风输出和故障状态。它必须能脱离 Tauri 测试。
+`crates/mini-aec-engine/` 已建立并负责设备生命周期、预分配缓冲、格式转换、10 ms 调度、虚拟麦克风输出和故障状态。它能脱离 Tauri 测试；render 同步和 AEC 编排保留给后续里程碑。
 
 核心边界至少包括：
 
@@ -77,6 +77,17 @@ Tauri 只负责进程生命周期和低频控制面：
 - `EngineController` / `EngineSnapshot`：非实时控制和只读状态。
 
 WebRTC、WASAPI、Tauri 和驱动通信类型不能泄漏到这些项目级合同之外。
+
+M2 的实时 bypass 合同固定为：
+
+- 配置必须提供精确的物理 capture endpoint ID；名称只用于诊断，不能自动跟随默认设备，也不能把 `MiniAEC Microphone` 选为自身输入；
+- 一个 capture worker 在自身线程创建、使用并销毁 WASAPI/COM 对象，一个 sink worker 独占一次 `VirtualMicrophoneSink` session；实时 worker 不写文件、不打印、不等待 Tauri 或 async runtime；
+- WASAPI 使用 event-driven shared mode 和 Windows Audio Engine conversion 请求 48 kHz、单声道 `f32`，随后清理非有限数、限制范围并组装严格的 480-sample 帧；
+- capture 到 sink 之间只有四个完整帧的同步 latest-wins ring；满时丢弃最旧未读帧，协议 sequence 在 dequeue 时从零分配，因此本地丢帧不会制造协议序号缺口；
+- 生命周期为 `Stopped → Starting → RunningBypass → Stopping → Stopped`，source invalidation、不可恢复 capture 错误、driver absence、access denial、sender contention、version mismatch 或 rejected write 会终止当前 run、清空 PCM 并进入 `Failed`，只能显式 restart；
+- snapshot 只包含 endpoint、run/session identity、packet/frame、silence、discontinuity、timestamp、queue、sink 和 error 元数据，不包含 PCM 或会议内容。
+
+当前验证驱动的控制 DACL 只允许 SYSTEM 和 Administrators，因此 headless bypass 的真机端到端验证是开发期 elevated 路径。普通用户托盘如何访问正式签名驱动仍属于后续安装/权限架构，M2 不对其作推断。显式 bypass 是独立里程碑，不是 AEC 故障时静默泄漏原始麦克风的回退策略。
 
 ### 2.3 Windows 音频适配
 
@@ -141,7 +152,7 @@ mini-aec/
 ├─ Cargo.toml
 ├─ crates/
 │  ├─ mini-aec-lab/       # 已有：采集、QPC 对齐、默认 AEC 离线验证
-│  └─ mini-aec-engine/    # 后续：实时音频图和项目级边界
+│  └─ mini-aec-engine/    # 已有：M2 实时 bypass、项目级边界和 Windows capture adapter
 ├─ src-tauri/             # 已有：无窗口托盘宿主
 ├─ driver/windows/        # SysVAD 来源、驱动和安装边界
 ├─ docs/
@@ -173,7 +184,7 @@ mini-aec/
 - 用 Windows 录音工具和至少一个会议软件读取；
 - 验证停止、崩溃、重启和卸载。
 
-这是当前最高价值验证，因为驱动数据通路决定产品是否能完整交付。
+已完成。开发期测试签名包已经验证唯一公共 capture endpoint、固定帧传输、sender/session 隔离、录音客户端消费、重启行为和完整 rollback；该结论不等同于正式签名、installer 或普通用户权限方案已经完成。
 
 ### M2：实时 bypass 链路
 
@@ -181,6 +192,8 @@ mini-aec/
 - 物理麦克风实时写入 `MiniAEC Microphone`；
 - 实现设备选择、状态、显式旁路和故障恢复；
 - 连续运行无爆音、旧帧重复或无界延迟。
+
+仓库内 engine、Windows capture adapter、headless harness 和合成验证已建立；开发期 elevated 真机验收已覆盖五分钟连续录音、stop/start 隔离、sender contention、设备 restart 和完整 rollback。普通用户驱动访问、正式安装与签名仍是后续工作，普通测试不得自行改变系统。
 
 ### M3：实时默认 AEC3
 
@@ -226,6 +239,4 @@ mini-aec/
 
 ## 10. SDD 状态
 
-仓库已经使用 OpenSpec 的 `spec-driven` schema 和 Codex 集成完成初始化，项目约束记录在 `openspec/config.yaml`。当前没有 active change，也没有 accepted capability spec。
-
-初始化本身不启动新功能。由用户确认进入下一项工作后，再通过 OpenSpec 创建对应 change；M1 虚拟麦克风数据通路 spike 是当前建议的第一个规格化变更，但不能在用户发起前预生成 proposal、spec、design 或 tasks。
+仓库使用 OpenSpec 的 `spec-driven` schema 和 Codex 集成。M1 的 `virtual-microphone-transport` 与 `driver-development-lifecycle` capability 已 accepted，完成的 change 保存在 archive；`implement-realtime-microphone-bypass` 的 29 项任务与单独审批的 acceptance 已完成，新增的 `realtime-audio-engine` capability 已同步到主 specs，change 已归档。

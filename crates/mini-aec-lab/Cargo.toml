@@ -9,11 +9,14 @@ version.workspace = true
 anyhow = "1.0.102"
 clap = { version = "4.6.0", features = ["derive"] }
 hound = "3.5.1"
+mini-aec-engine = { path = "../mini-aec-engine" }
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.150"
 webrtc-audio-processing = { version = "~2.1.0", features = ["bundled"] }
 
 [target.'cfg(windows)'.dependencies]
+mini-aec-transport = { path = "../mini-aec-transport" }
+mini-aec-windows-transport = { path = "../mini-aec-windows-transport" }
 wasapi = "0.23.0"
 
 [lints]

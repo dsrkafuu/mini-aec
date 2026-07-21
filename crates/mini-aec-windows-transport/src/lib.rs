@@ -60,6 +60,11 @@ mod platform {
     ) -> i32;
   }
 
+  #[link(name = "shell32")]
+  unsafe extern "system" {
+    fn IsUserAnAdmin() -> i32;
+  }
+
   pub(super) struct FileDevice(File);
 
   impl FileDevice {
@@ -70,6 +75,11 @@ mod platform {
         .open(path)
         .map(Self)
     }
+  }
+
+  pub(super) fn current_process_is_elevated() -> bool {
+    // SAFETY: this parameter-free Windows helper only inspects the current effective token.
+    unsafe { IsUserAnAdmin() != 0 }
   }
 
   impl DeviceBackend for FileDevice {
@@ -126,8 +136,8 @@ impl WindowsVirtualMicrophoneSink {
   /// already owns the exclusive control handle.
   #[cfg(windows)]
   pub fn connect() -> Result<Self, SinkError> {
-    let backend =
-      platform::FileDevice::open(DEVICE_PATH).map_err(|error| map_io_error("open", &error))?;
+    let backend = platform::FileDevice::open(DEVICE_PATH)
+      .map_err(|error| map_connect_error(&error, platform::current_process_is_elevated()))?;
     Ok(Self::with_backend(backend))
   }
 
@@ -253,6 +263,18 @@ fn map_io_error(operation: &str, error: &io::Error) -> SinkError {
     _ => SinkErrorKind::TransportFailure,
   };
   SinkError::new(kind, format!("failed to {operation}: {error}"))
+}
+
+fn map_connect_error(error: &io::Error, process_is_elevated: bool) -> SinkError {
+  if error.raw_os_error() == Some(5) && process_is_elevated {
+    return SinkError::new(
+      SinkErrorKind::Busy,
+      format!(
+        "failed to open: the exclusive MiniAEC control device is already owned by another sender: {error}"
+      ),
+    );
+  }
+  map_io_error("open", error)
 }
 
 fn encode_open(config: SessionConfig) -> [u8; OPEN_REQUEST_SIZE] {
@@ -449,9 +471,10 @@ mod tests {
 
   use super::{
     decode_diagnostics, encode_close, encode_frame, encode_open, get_u16, get_u32, get_u64,
-    DeviceBackend, WindowsVirtualMicrophoneSink, CLOSE_REQUEST_SIZE, DIAGNOSTICS_SIZE,
-    IOCTL_CLOSE_SESSION, IOCTL_GET_DIAGNOSTICS, IOCTL_OPEN_SESSION, IOCTL_WRITE_FRAME,
-    OPEN_REQUEST_SIZE, PROTOCOL_MAGIC, PROTOCOL_VERSION, WRITE_HEADER_SIZE, WRITE_REQUEST_SIZE,
+    map_connect_error, DeviceBackend, WindowsVirtualMicrophoneSink, CLOSE_REQUEST_SIZE,
+    DIAGNOSTICS_SIZE, IOCTL_CLOSE_SESSION, IOCTL_GET_DIAGNOSTICS, IOCTL_OPEN_SESSION,
+    IOCTL_WRITE_FRAME, OPEN_REQUEST_SIZE, PROTOCOL_MAGIC, PROTOCOL_VERSION, WRITE_HEADER_SIZE,
+    WRITE_REQUEST_SIZE,
   };
 
   type CallLog = Arc<Mutex<Vec<(u32, Vec<u8>)>>>;
@@ -697,6 +720,16 @@ mod tests {
         .expect_err("configured failure");
       assert_eq!(error.kind(), expected);
     }
+  }
+
+  #[test]
+  fn exclusive_open_denial_is_busy_only_for_an_elevated_process() {
+    let denial = io::Error::from_raw_os_error(5);
+    assert_eq!(
+      map_connect_error(&denial, false).kind(),
+      SinkErrorKind::AccessDenied
+    );
+    assert_eq!(map_connect_error(&denial, true).kind(), SinkErrorKind::Busy);
   }
 
   #[test]

@@ -1897,12 +1897,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "mini-aec-engine"
+version = "0.1.0"
+dependencies = [
+ "mini-aec-transport",
+ "serde",
+ "wasapi",
+]
+
+[[package]]
 name = "mini-aec-lab"
 version = "0.1.0"
 dependencies = [
  "anyhow",
  "clap",
  "hound",
+ "mini-aec-engine",
+ "mini-aec-transport",
+ "mini-aec-windows-transport",
  "serde",
  "serde_json",
  "wasapi",

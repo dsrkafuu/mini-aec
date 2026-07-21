@@ -27,6 +27,8 @@ enum Command {
   Capture(CaptureArgs),
   /// Align a diagnostic run by QPC timestamp and process it through WebRTC AEC3.
   Aec(AecArgs),
+  /// Bypass one explicit physical microphone into `MiniAEC Microphone` in real time.
+  Bypass(BypassArgs),
 }
 
 #[derive(Debug, Args)]
@@ -63,6 +65,21 @@ struct AecArgs {
   active_threshold_dbfs: f64,
 }
 
+#[derive(Debug, Args)]
+struct BypassArgs {
+  /// Exact physical capture endpoint ID. Friendly names and defaults are not accepted.
+  #[arg(long)]
+  microphone_id: String,
+
+  /// Run duration in seconds.
+  #[arg(long)]
+  duration: u64,
+
+  /// Parent directory for metadata-only validation runs.
+  #[arg(long, default_value = "driver/windows/out/validation/engine")]
+  output: PathBuf,
+}
+
 fn main() -> Result<()> {
   let cli = Cli::parse();
 
@@ -79,5 +96,69 @@ fn main() -> Result<()> {
       stream_delay_ms: args.stream_delay_ms,
       active_threshold_dbfs: args.active_threshold_dbfs,
     }),
+    Command::Bypass(args) => platform::bypass(platform::BypassConfig {
+      duration: Duration::from_secs(args.duration),
+      output_root: args.output,
+      microphone_endpoint_id: args.microphone_id,
+    }),
+  }
+}
+
+#[cfg(test)]
+mod tests {
+  use clap::Parser;
+
+  use super::{Cli, Command};
+
+  #[test]
+  fn existing_command_names_and_core_arguments_remain_available() {
+    assert!(matches!(
+      Cli::try_parse_from(["mini-aec-lab", "devices", "--json"])
+        .expect("devices arguments parse")
+        .command,
+      Command::Devices { json: true }
+    ));
+    assert!(matches!(
+      Cli::try_parse_from([
+        "mini-aec-lab",
+        "capture",
+        "--duration",
+        "1",
+        "--microphone",
+        "mic",
+        "--render",
+        "speaker"
+      ])
+      .expect("capture arguments parse")
+      .command,
+      Command::Capture(_)
+    ));
+    assert!(matches!(
+      Cli::try_parse_from(["mini-aec-lab", "aec", "--run", "artifacts/runs/example"])
+        .expect("aec arguments parse")
+        .command,
+      Command::Aec(_)
+    ));
+  }
+
+  #[test]
+  fn bypass_requires_an_exact_id_and_duration() {
+    assert!(Cli::try_parse_from(["mini-aec-lab", "bypass"]).is_err());
+    assert!(
+      Cli::try_parse_from(["mini-aec-lab", "bypass", "--microphone-id", "physical-id"]).is_err()
+    );
+    assert!(matches!(
+      Cli::try_parse_from([
+        "mini-aec-lab",
+        "bypass",
+        "--microphone-id",
+        "physical-id",
+        "--duration",
+        "300"
+      ])
+      .expect("complete bypass arguments parse")
+      .command,
+      Command::Bypass(_)
+    ));
   }
 }
