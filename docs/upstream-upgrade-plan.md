@@ -6,6 +6,8 @@ The current WebRTC M131 AEC3 implementation is a frozen product baseline, not a 
 
 This separation is necessary because Google WebRTC `main` is a Chromium development branch, FreeDesktop maintains a distribution-oriented source extraction and build system, and the Rust wrapper warns that minor releases within the same major version may contain API-breaking changes.
 
+The project is currently preparing the M3 real-time default-AEC product path. M1 transport and M2 bypass validation do not establish an algorithm upgrade trigger, and M3 must use the frozen upstream-default M131 adapter so synchronization, lifecycle and product-path failures are not confounded with a dependency change.
+
 ## Upgrade triggers
 
 Open an upgrade evaluation when at least one condition applies:

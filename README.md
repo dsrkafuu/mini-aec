@@ -1,18 +1,20 @@
 # MiniAEC
 
-MiniAEC is a Windows 11 x64 hands-free acoustic echo canceller. It captures a physical microphone together with the actual speaker render loopback, removes the loudspeaker echo with WebRTC AEC3, and will publish the processed signal as the bundled `MiniAEC Microphone` capture endpoint.
+MiniAEC is a Windows 11 x64 hands-free acoustic echo canceller. Its product path captures a physical microphone together with the actual speaker render loopback, removes loudspeaker echo with WebRTC AEC3, and publishes the result through the bundled `MiniAEC Microphone` capture endpoint.
 
 MiniAEC intentionally stops at AEC. Noise suppression, automatic gain control, equalization, and voice enhancement belong after `MiniAEC Microphone`, for example in NVIDIA Broadcast or the selected meeting application.
 
-## Current status
+## Current status and next milestone
 
-- The application is a windowless Tauri 2 Rust process with a Windows tray menu. The audio-related entries are disabled until the real-time engine is connected.
+- The application is a windowless Tauri 2 Rust process with a Windows tray menu. The audio-related entries remain disabled because the real-time engine is not connected to the tray host yet.
 - `mini-aec-lab` can enumerate Windows endpoints, capture a physical microphone and WASAPI render loopback together, align them by QPC timestamps, and run the frozen default WebRTC AEC3 baseline offline.
 - The M1 virtual-microphone transport is validated end to end: the pinned SysVAD-derived development driver exposes one selectable `MiniAEC Microphone`, accepts fixed 10 ms PCM16 frames through the private adapter, isolates sender sessions, survives the validated restart cases, and rolls back cleanly.
-- M2 real-time bypass is validated on the elevated development path. The Tauri-independent `mini-aec-engine` captures one explicit physical endpoint through event-driven WASAPI, normalizes and frames it, and sends it to `MiniAEC Microphone` through a bounded four-frame queue; the accepted run covered five-minute continuity, stop/start isolation, sender contention, device restart, and complete rollback. Render loopback, clock alignment, AEC3, tray integration, normal-user driver access, installation, and production signing remain later milestones.
-- OpenSpec uses the `spec-driven` schema. The accepted `implement-realtime-microphone-bypass` change is archived after syncing its `realtime-audio-engine` capability to the main specs.
+- M2 real-time bypass is validated on the elevated development path. The Tauri-independent `mini-aec-engine` captures one explicit physical microphone through event-driven WASAPI, normalizes and frames it, and sends it to `MiniAEC Microphone` through a bounded four-frame queue. The accepted run covered five-minute continuity, stop/start isolation, sender contention, device restart, and complete rollback.
+- M3 real-time default AEC3 is the next recommended capability. It will add an explicit physical render-loopback input, bounded QPC-based alignment, a project-owned `EchoCanceller` boundary around the frozen default M131 adapter, AEC-specific states and metadata-only diagnostics, and end-to-end acoustic validation through `MiniAEC Microphone`.
+- Drift compensation remains M4 work and must be driven by measured long-run clock error. Normal-user driver access, installation, production signing, upgrade and uninstall remain M5 work.
+- OpenSpec uses the `spec-driven` schema. The accepted M1 and M2 changes are archived and their capabilities are synced to the main specs. There is currently no active change; starting M3 requires a new proposal rather than editing an archived change.
 
-See [docs/technical-plan.md](docs/technical-plan.md) for the architecture and delivery gates. AEC provenance and upgrade rules live in [vendor/UPSTREAM.md](vendor/UPSTREAM.md) and [docs/upstream-upgrade-plan.md](docs/upstream-upgrade-plan.md).
+See [docs/technical-plan.md](docs/technical-plan.md) for the architecture and delivery gates, [docs/aec-baseline.md](docs/aec-baseline.md) for the frozen algorithm baseline and next validation gate, and [driver/windows/README.md](driver/windows/README.md) for the development driver boundary. AEC provenance and upgrade rules live in [vendor/UPSTREAM.md](vendor/UPSTREAM.md) and [docs/upstream-upgrade-plan.md](docs/upstream-upgrade-plan.md).
 
 ## Repository layout
 
@@ -28,7 +30,7 @@ vendor/                    pinned Windows build layer for WebRTC AEC3
 artifacts/                 ignored private local recordings
 ```
 
-The real-time engine remains independent from Tauri and exposes project-owned audio and virtual-sink boundaries instead of CLI, WASAPI, driver, or WebRTC types. The later AEC milestone will add the project-owned `EchoCanceller` boundary without changing this control surface.
+The real-time engine remains independent from Tauri and exposes project-owned audio and virtual-sink boundaries instead of CLI, WASAPI, driver, or WebRTC types. M3 will extend that model with a project-owned render-input role, synchronizer and `EchoCanceller` boundary without moving PCM into Tauri.
 
 ## Tray application
 
@@ -89,6 +91,8 @@ With an already installed and separately approved development validation driver,
 The command never changes BCD, certificates, drivers, devices, or Windows default audio roles. It rejects `MiniAEC Microphone` as its own source, writes metadata-only snapshots below ignored `driver/windows/out/validation/engine/`, and exits nonzero on source or sink failure. The current driver control DACL makes this an elevated development-only validation path; it is not the later normal-user tray or production installation design.
 
 Bypass is an explicit M2 milestone and state, not a fallback for an AEC failure. Private Windows Recorder files remain outside version control under ignored local paths.
+
+The bypass command is the current real-time validation surface. No real-time AEC command exists yet; the offline `aec` command must not be described as product-path acceptance.
 
 ## Bundled WebRTC build on Windows
 

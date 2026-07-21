@@ -1,6 +1,6 @@
 # MiniAEC 技术方案
 
-状态：M1 虚拟麦克风数据通路已验证；M2 实时 bypass 已通过开发期 elevated 路径验收，尚非可用 AEC 产品
+状态：M1 虚拟麦克风数据通路与 M2 实时 bypass 已通过开发期 elevated 路径验收；当前无活动 OpenSpec change；下一阶段为 M3 实时默认 AEC3，项目尚非可用 AEC 产品
 
 目标平台：Windows 11 x64
 
@@ -69,12 +69,13 @@ Tauri 只负责进程生命周期和低频控制面：
 
 `crates/mini-aec-engine/` 已建立并负责设备生命周期、预分配缓冲、格式转换、10 ms 调度、虚拟麦克风输出和故障状态。它能脱离 Tauri 测试；render 同步和 AEC 编排保留给后续里程碑。
 
-核心边界至少包括：
+已建立的核心边界包括：
 
-- `AudioInput`：物理 capture 和 render loopback；
-- `EchoCanceller`：render 分析、capture 处理、reset 和状态；
+- `AudioInput`：当前承载显式选择的物理 capture；M3 需要把输入角色扩展到物理 render loopback，同时保持 Windows 类型不泄漏；
 - `VirtualMicrophoneSink`：向驱动提交处理后 PCM；
 - `EngineController` / `EngineSnapshot`：非实时控制和只读状态。
+
+M3 将新增项目级 `EchoCanceller` 和有界双路同步边界，负责 render 分析、capture 处理、reset、故障状态和元数据诊断；WebRTC 类型只能存在于默认 M131 adapter 内。
 
 WebRTC、WASAPI、Tauri 和驱动通信类型不能泄漏到这些项目级合同之外。
 
@@ -202,6 +203,8 @@ mini-aec/
 - 托盘显示 running/degraded/bypass；
 - 在真实外放、近端单讲和双讲中端到端验证。
 
+这是当前下一阶段，尚未创建 OpenSpec change。建议 capability 为 `realtime-echo-cancellation`，change 名称为 `implement-realtime-default-aec`。该阶段只建立默认算法的实时产品链路和可观察故障行为，不包含 AEC 调参、依赖升级、长期漂移补偿、普通用户驱动权限、安装或生产签名。
+
 ### M4：漂移与稳定性
 
 - 使用 K7 和 Sound Blaster X4 进行至少 30 分钟漂移测量；
@@ -239,4 +242,4 @@ mini-aec/
 
 ## 10. SDD 状态
 
-仓库使用 OpenSpec 的 `spec-driven` schema 和 Codex 集成。M1 的 `virtual-microphone-transport` 与 `driver-development-lifecycle` capability 已 accepted，完成的 change 保存在 archive；`implement-realtime-microphone-bypass` 的 29 项任务与单独审批的 acceptance 已完成，新增的 `realtime-audio-engine` capability 已同步到主 specs，change 已归档。
+仓库使用 OpenSpec 的 `spec-driven` schema 和 Codex 集成。M1 的 `virtual-microphone-transport` 与 `driver-development-lifecycle` capability 已 accepted，完成的 change 保存在 archive；`implement-realtime-microphone-bypass` 的 29 项任务与单独审批的 acceptance 已完成，新增的 `realtime-audio-engine` capability 已同步到主 specs，change 已归档。当前 `openspec list --json` 无活动 change；M3 必须从新 proposal 开始，不能修改已归档的 M1/M2 artifacts。

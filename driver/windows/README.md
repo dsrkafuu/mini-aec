@@ -2,6 +2,12 @@
 
 This directory contains the Windows 11 x64 validation driver for the single public capture endpoint `MiniAEC Microphone`. It is derived from the pinned Microsoft SysVAD snapshot recorded in [`UPSTREAM.md`](UPSTREAM.md); the validation package is development-only and is not a production installer or signing path.
 
+## Current validation status
+
+M1 validated deterministic user-mode signal transport, the single public capture endpoint, sender and session isolation, underrun silence, restart behavior, capture-client consumption and complete rollback. M2 reused the same transport for a five-minute physical-microphone bypass run and validated stop/start isolation, sender contention, device restart and stale-audio prevention on the elevated development path.
+
+The next M3 real-time AEC work is expected to consume this transport without changing its IOCTL layout, public endpoint name, fixed PCM contract or driver ring behavior. The current Administrator/SYSTEM-only DACL remains a known development limitation; normal-user access, production signing and installer architecture are not solved by the M1/M2 acceptance results.
+
 ## Selected transport
 
 The driver exposes one ordinary audio capture endpoint and one private non-audio control device named `MiniAECTransport`. User-mode product code depends on the project-owned `VirtualMicrophoneSink` trait; only `mini-aec-windows-transport` knows the IOCTL and binary layouts.

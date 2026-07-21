@@ -31,6 +31,12 @@ Earlier work established reusable engineering facts:
 
 These facts justify retaining the capture, alignment, reporting, and default AEC processing code.
 
+## Current product-path status
+
+The M1 `MiniAEC Microphone` transport and M2 real-time physical-microphone bypass are now validated on the approved elevated development path. The driver accepts continuous fixed-format user-mode PCM, ordinary Windows capture clients can consume the public endpoint, and `mini-aec-engine` can carry one explicitly selected physical microphone through bounded normalization, framing, queueing and sink-session lifecycle without stale-frame replay.
+
+Those results close the first two prerequisites below. They do not yet validate real-time echo cancellation: the engine still has one capture input, reports `RunningBypass`, does not capture a render-loopback reference and does not invoke WebRTC AEC3.
+
 ## What was reset
 
 The old product context evaluated WAV files directly and led to experiments in near-end detector timing, suppression gain recovery, low/high-frequency near-end masking, blind A/B/C generation, and linear/full output comparison. Those experiments were useful for diagnosis, but their subjective ranking is not accepted as a product baseline after the signal chain changed to:
@@ -87,15 +93,15 @@ cargo run -p mini-aec-lab -- aec `
   --stream-delay-ms 60
 ```
 
-## New validation gate
+## Real-time product validation gate
 
 Offline WAV output is now a diagnostic, not the final acceptance surface. The default baseline must be judged again only after the following are working:
 
-1. A bundled `MiniAEC Microphone` endpoint receives continuous user-mode PCM.
-2. The physical microphone can pass through that endpoint without AEC.
-3. The real-time engine supplies the selected physical render loopback to AEC3.
-4. Windows Recorder and at least one target meeting application can consume the endpoint without discontinuities.
-5. The same recording is assessed both directly and after the intended downstream noise suppressor.
+1. Completed in M1: a bundled `MiniAEC Microphone` endpoint receives continuous user-mode PCM.
+2. Completed in M2: the physical microphone passes through that endpoint without AEC on the elevated development path.
+3. Pending in M3: the real-time engine supplies an explicitly selected physical render loopback to the frozen default AEC3 adapter and aligns it with microphone frames on a bounded QPC timeline.
+4. Pending in M3: Windows Recorder and at least one target meeting application consume the AEC output through `MiniAEC Microphone` without unexplained discontinuities.
+5. Pending in M3: the same acoustic scenarios are assessed both directly and after the intended downstream noise suppressor.
 
 The minimum acoustic matrix is:
 
@@ -112,4 +118,6 @@ Only after this end-to-end default baseline exposes a repeatable blocker may a n
 
 ## Next action
 
-Do not record another AEC tuning sample yet. The next highest-value validation is the `MiniAEC Microphone` driver data path: install a pinned SysVAD-derived test driver, feed a deterministic user-mode signal continuously, and prove that ordinary Windows capture clients can consume it and recover from process restart. Real-time bypass and AEC follow only after this boundary is credible.
+Do not record another tuning sample or alter the frozen M131 baseline. The next highest-value capability is real-time default AEC3: extend `mini-aec-engine` with an explicit physical render-loopback input, bounded QPC-based synchronization, a project-owned `EchoCanceller` boundary and metadata-only AEC diagnostics, then validate the output end to end through `MiniAEC Microphone`.
+
+M3 should collect timestamp delta, buffer depth, discontinuity, underrun and drift evidence, but it should not pre-emptively add asynchronous resampling. Sustained clock-error correction belongs to M4 after measurements establish its direction and required control range. Normal-user driver access, installation and production signing remain separate M5 concerns.
