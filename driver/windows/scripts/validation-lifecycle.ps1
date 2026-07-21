@@ -23,6 +23,7 @@ $infPath = Join-Path $PackageRoot 'MiniAECValidation.inf'
 $catalogPath = Join-Path $PackageRoot 'MiniAECValidation.cat'
 $certificatePath = Join-Path $PackageRoot 'MiniAECValidation.cer'
 $hardwareId = 'Root\MiniAECValidation'
+$serviceName = 'MiniAECValidation'
 $certificateSubject = 'CN=MiniAEC Validation Test'
 
 function Get-Toolchain {
@@ -73,6 +74,30 @@ function Show-Plan {
     Write-Host 'Mutating actions refuse to run unless -ConfirmSystemChanges is supplied. Install and Restart remain separate actions from signing preparation.'
 }
 
+function Get-MiniAecDevices {
+    $miniAecDevices = @()
+    foreach ($device in @(Get-PnpDevice -Class Media)) {
+        $hardwareIdProperty = Get-PnpDeviceProperty -InstanceId $device.InstanceId -KeyName 'DEVPKEY_Device_HardwareIds' -ErrorAction SilentlyContinue
+        $hardwareIds = @($hardwareIdProperty.Data)
+        if ($hardwareId -notin $hardwareIds) {
+            continue
+        }
+
+        $serviceProperty = Get-PnpDeviceProperty -InstanceId $device.InstanceId -KeyName 'DEVPKEY_Device_Service' -ErrorAction SilentlyContinue
+        $driverInfProperty = Get-PnpDeviceProperty -InstanceId $device.InstanceId -KeyName 'DEVPKEY_Device_DriverInfPath' -ErrorAction SilentlyContinue
+        $miniAecDevices += [pscustomobject]@{
+            Status = $device.Status
+            Class = $device.Class
+            FriendlyName = $device.FriendlyName
+            InstanceId = $device.InstanceId
+            HardwareIds = $hardwareIds
+            Service = $serviceProperty.Data
+            DriverInfPath = $driverInfProperty.Data
+        }
+    }
+    return $miniAecDevices
+}
+
 function Save-Inventory {
     if (-not $EvidencePath) {
         $timestamp = Get-Date -Format 'yyyyMMdd-HHmmss'
@@ -106,7 +131,7 @@ function Save-Inventory {
         WasapiEndpoints = $audioJson | ConvertFrom-Json
         AudioEndpointPnp = @(Get-PnpDevice -Class AudioEndpoint | Select-Object Status, Class, FriendlyName, InstanceId)
         MediaPnp = @(Get-PnpDevice -Class Media | Select-Object Status, Class, FriendlyName, InstanceId)
-        MiniAecDevices = @(Get-PnpDevice | Where-Object { $_.InstanceId -like 'ROOT\MINIAECVALIDATION*' } | Select-Object Status, Class, FriendlyName, InstanceId)
+        MiniAecDevices = @(Get-MiniAecDevices)
         DriverPackages = @(pnputil.exe /enum-drivers /class Media)
         MiniAecCertificates = @(
             Get-ChildItem Cert:\LocalMachine\My, Cert:\LocalMachine\Root, Cert:\LocalMachine\TrustedPublisher |
@@ -161,9 +186,9 @@ switch ($Action) {
         Write-Host 'Signing preparation completed. Reboot Windows manually, then rerun Inventory and verify TESTSIGNING before Install.'
     }
     'Install' {
-        & $toolchain.SignToolPath verify /v /kp $catalogPath
+        & $toolchain.SignToolPath verify /v /pa $catalogPath
         if ($LASTEXITCODE -ne 0) {
-            throw 'The validation catalog does not pass kernel-policy signature verification.'
+            throw 'The validation catalog does not pass test-signature verification.'
         }
         & $devCon install $infPath $hardwareId
         if ($LASTEXITCODE -ne 0) {
@@ -173,8 +198,12 @@ switch ($Action) {
     }
     'Restart' {
         & $devCon restart $hardwareId
-        if ($LASTEXITCODE -ne 0) {
-            throw "DevCon restart failed with exit code $LASTEXITCODE."
+        $restartExitCode = $LASTEXITCODE
+        if ($restartExitCode -eq 1) {
+            throw 'DevCon reports that restarting MiniAEC requires a Windows reboot. No reboot was performed. Save a fresh Inventory and obtain explicit approval before rebooting Windows.'
+        }
+        if ($restartExitCode -ne 0) {
+            throw "DevCon restart failed with exit code $restartExitCode."
         }
     }
     'Uninstall' {
@@ -204,6 +233,11 @@ switch ($Action) {
                 throw "BCDEdit rollback failed with exit code $LASTEXITCODE."
             }
             Write-Host 'Test signing was set off. Reboot Windows manually to complete boot-state rollback.'
+        }
+        $serviceRegistryPath = "Registry::HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Services\$serviceName"
+        $remainingService = Get-Service -Name $serviceName -ErrorAction SilentlyContinue
+        if ($remainingService -or (Test-Path -LiteralPath $serviceRegistryPath)) {
+            throw 'The MiniAEC device, package and targeted certificate were removed, but the driver service is pending deletion. No reboot was performed. Save a fresh Inventory and obtain explicit approval before rebooting Windows.'
         }
     }
 }

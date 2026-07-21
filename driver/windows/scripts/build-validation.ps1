@@ -77,11 +77,15 @@ foreach ($artifact in @($builtInf, $builtSys)) {
 }
 
 $infText = Get-Content -LiteralPath $builtInf -Raw
-if ($infText -notmatch 'MiniAEC Microphone' -or $infText -notmatch 'KSCATEGORY_CAPTURE') {
+$captureInterfaces = [regex]::Matches($infText, '(?im)^\s*AddInterface\s*=\s*%KSCATEGORY_CAPTURE%')
+if ($infText -notmatch 'MiniAEC Microphone' -or $captureInterfaces.Count -ne 1) {
     throw 'Validation INF does not declare the required MiniAEC Microphone capture endpoint.'
 }
 if ($infText -match 'KSCATEGORY_RENDER') {
     throw 'Validation INF unexpectedly declares a producer-facing render endpoint.'
+}
+if ($infText -match 'PKEY_AudioDevice_NeverSetAsDefaultEndpoint') {
+    throw 'Validation INF prevents MiniAEC Microphone from being selected as a default input device.'
 }
 
 New-Item -ItemType Directory -Path $packageRoot | Out-Null

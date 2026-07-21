@@ -44,10 +44,13 @@ driver\windows\scripts\validation-lifecycle.ps1 -Action Restart -ConfirmSystemCh
 Rollback removes the root device, deletes only the recorded MiniAEC package, removes only the recorded certificate thumbprint from LocalMachine My, Root and TrustedPublisher, and optionally restores test signing to off when the pre-install inventory showed it was off:
 
 ```powershell
+driver\windows\scripts\validation-lifecycle.ps1 -Action Uninstall -PublishedInf oem<number>.inf -CertificateThumbprint <40-hex-thumbprint> -ConfirmSystemChanges
+
+# Use this variant only when restoring a saved TESTSIGNING=off state was separately approved.
 driver\windows\scripts\validation-lifecycle.ps1 -Action Uninstall -PublishedInf oem<number>.inf -CertificateThumbprint <40-hex-thumbprint> -RestoreTestSigningOff -ConfirmSystemChanges
 ```
 
-If `-RestoreTestSigningOff` is used, reboot Windows manually and save another inventory. Compare the endpoint/default-role list, PnP list, boot configuration, certificate stores, driver packages, service/device absence, and unrelated physical devices with the pre-install JSON. If signing preparation fails before installation, remove only the exact recorded certificate thumbprint and restore the saved test-signing state manually. Secure Boot can prevent BCDEdit test-signing changes; do not disable Secure Boot automatically or from this script.
+If `-RestoreTestSigningOff` is used, reboot Windows manually and save another inventory. A targeted DevCon restart or uninstall can also report that a full reboot is required; the script does not reboot Windows and the pending state must be inventoried and approved before rebooting. Compare the endpoint/default-role list, PnP list, boot configuration, certificate stores, driver packages, service/device absence, and unrelated physical devices with the pre-install JSON. If signing preparation fails before installation, remove only the exact recorded certificate thumbprint and restore the saved test-signing state manually. Secure Boot can prevent BCDEdit test-signing changes; do not disable Secure Boot automatically or from this script.
 
 ## Fixed input contract
 
@@ -80,7 +83,9 @@ Save the present audio endpoint inventory before installation. After an approved
 
 - Exactly one new public capture endpoint is named `MiniAEC Microphone`.
 - No producer-only render or capture endpoint appears in ordinary Windows Sound settings or Windows Recorder device selection.
-- The pre-install default input and output devices remain the defaults.
+- Windows system sound settings allow `MiniAEC Microphone` to be selected as the default input device.
+- Record the saved and installed Console, Multimedia, and Communications default input roles. Windows-originated role changes during installation are accepted when they are explicit evidence, and uninstall must restore the saved roles automatically or pause for separately approved restoration.
+- The pre-install default output roles remain unchanged.
 - Every unrelated physical capture and render endpoint from the baseline remains present with the same enabled state.
 - Record the package identity, public endpoint instance ID, driver service identity, and the before/after inventory paths.
 
@@ -91,7 +96,7 @@ Visual inspection in Windows Sound settings and Windows Recorder remains require
 Use the following sequence for the installed validation driver:
 
 1. Confirm that the baseline contains no earlier MiniAEC package or device and that the installed validation driver exposes only `MiniAEC Microphone`.
-2. Open Windows Recorder and select `MiniAEC Microphone` using the application's input-device selection without changing the Windows default input device.
+2. Open Windows Recorder and select `MiniAEC Microphone`. Record whether Windows already assigned it a default input role rather than forcing the saved default to remain unchanged.
 3. Start recording while no sender is connected and retain the initial silence as proof that stale PCM is not replayed.
 4. Start `mini-aec-sender --transport driver --duration-seconds 300` and save every JSON-line event, including the generated session identity and frame sequence 0 through 29,999.
 5. After the sender logs `session_closed`, stop Windows Recorder and save the recording outside version control in that run's ignored evidence directory.
@@ -139,3 +144,39 @@ Create one record per run with these fields:
 | Decision | Hard-gate pass/fail for isolation, silence on underrun, sender restart, driver restart, plus complexity and attack-surface notes |
 
 Generated driver packages, certificate material, logs, and recordings remain outside version control. Only a redacted result record containing no private PCM may be committed after validation is complete.
+
+## 2026-07-21 validation result
+
+The development transport passed the endpoint-isolation, five-minute continuity, sender-restart, driver-restart and rollback gates on the working tree based on `main` commit `759614e`. The OpenSpec change was `validate-virtual-microphone-transport`, the control protocol was version 1, and diagnostics used schema 2. This result validates the development transport only; it is not production signing, installer, upgrade, compatibility or real-time AEC acceptance.
+
+The clean-checkout reproduction commands for the resulting source revision are:
+
+```powershell
+git status --short
+driver\windows\scripts\preflight.ps1 -Json
+driver\windows\scripts\verify-upstream.ps1 -CheckoutRoot .tools\sysvad-upstream
+driver\windows\scripts\build-validation.ps1
+.tools\cargo-webrtc.cmd build -p mini-aec-sender --release
+cargo fmt --all -- --check
+.tools\cargo-webrtc.cmd test --workspace
+.tools\cargo-webrtc.cmd clippy --workspace --all-targets -- -D warnings
+```
+
+The validated environment was Windows 11 Pro for Workstations 25H2 build 26200.8875, Visual Studio Build Tools 2026 18.8.12009.203, x64 MSBuild 18.8.2, MSVC 14.51.36231, Windows SDK/WDK 10.0.28000.0, and SignTool 10.0.28000.2114. Secure Boot was off. TESTSIGNING was already on at the saved rollback baseline and was intentionally left on with explicit approval.
+
+Final source checks passed: `cargo fmt --all -- --check`, `.tools\cargo-webrtc.cmd test --workspace`, `.tools\cargo-webrtc.cmd clippy --workspace --all-targets -- -D warnings`, `driver\windows\scripts\build-validation.ps1`, and `.tools\cargo-webrtc.cmd build -p mini-aec-sender --release`. The first test invocation encountered a stale generated Tauri permission path from the repository's former `D:\GitHub\open-denoise` location; removing only the regenerable `tauri` Cargo cache fixed the environment issue, after which the complete test suite passed. `git diff --check` passed, and the Git index contained no generated package, certificate file, private recording, `driver/windows/out/`, `target/`, or `artifacts/` content.
+
+The package installed as `oem53.inf`, service `MiniAECValidation`, device `ROOT\MEDIA\0000`, and public endpoint `{0.0.1.00000000}.{48c79171-915d-46ba-81e4-606f4be171e8}`. Development certificate thumbprint `05F44E8C76BCA800C2980B2978FC47A27EFE2BC3` was used only in LocalMachine My, Root and TrustedPublisher and was removed during rollback. Windows automatically changed the Console, Multimedia and Communications default input roles from endpoint `{0.0.1.00000000}.{6a144e18-ca31-4794-b41e-ffe95fb9aba4}` (`Krisp Microphone`) to `MiniAEC Microphone` during installation; this established system-default selectability. Uninstall automatically restored all three roles to Krisp without a manual default-device mutation. Default render roles remained on `{0.0.0.00000000}.{116f2831-3426-43b9-a9ae-740dde724709}` (`Sound Blaster X4`).
+
+| Stage | Evidence | Result |
+| --- | --- | --- |
+| Rollback baseline | `driver/windows/out/validation/inventory-20260721-183254.json` | No MiniAEC device, package or certificate; Krisp owned all default input roles; TESTSIGNING on |
+| Installed endpoint | `driver/windows/out/validation/inventory-20260721-184123.json` | One active MiniAEC capture endpoint, no added public render endpoint, MiniAEC owned all default input roles |
+| Five-minute and sender restart | `driver/windows/out/validation/driver/20260721-191056/` and private `C:\Users\<user>\Documents\录音\录音 (3).m4a` | First session sent 30,000 ordered frames with zero rejected writes, underruns, overflows or discards in its delta; after 10.23 seconds of silence, a distinct session sent 1,000 frames from sequence 0 with no stale replay |
+| Before driver restart | `driver/windows/out/validation/inventory-20260721-192334.json` | Device, endpoint, package, certificate and default roles saved before the approved restart |
+| After driver reboot | `driver/windows/out/validation/inventory-20260721-193518.json` | Same device, endpoint ID, package and default roles returned without reinstalling |
+| Fresh post-restart session | `driver/windows/out/validation/driver/20260721-193653/` and private `C:\Users\<user>\Documents\录音\录音 (4).m4a` | New session `00005adc0000000018c44aff75dd1728` sent sequences 0-2999; 3,000 accepted frames and zero rejected writes, underruns, overflows, discards or resets; 41.30-second recording contained 5.45 seconds initial silence, 30 seconds of new signal with six ordered five-second markers, and 5.85 seconds trailing silence |
+| After uninstall | `driver/windows/out/validation/inventory-20260721-194106.json` | Endpoint, PnP device, package and certificate gone; defaults restored; running disabled service remained marked `DriverDelete=1` and `DeleteFlag=1` pending reboot |
+| Final rollback | `driver/windows/out/validation/inventory-20260721-194543.json` | Service and registry entry gone after the separately approved reboot; package, device, endpoint, control interface and certificate absent; saved input/output roles and boot state restored |
+
+The targeted DevCon restart required a full Windows reboot instead of completing dynamically. Uninstall also required a full reboot to unload the disabled kernel service and finish deleting its marked service entry; the lifecycle script now reports both pending-reboot conditions without rebooting automatically. The final inventory differed from the saved baseline only in the unrelated `Realtek Bluetooth LE Audio Driver` PnP row, which was `Present=False` with `CM_PROB_PHANTOM` after reboot; its package remained installed, no Bluetooth audio endpoint was added or removed, and all visible endpoint identities and default roles matched the baseline. Windows Recorder version was not captured. Private recordings, generated packages, logs and certificate material remain ignored and must not be committed.

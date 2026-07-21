@@ -1,12 +1,24 @@
-## ADDED Requirements
+# Virtual microphone transport Specification
+
+## Purpose
+
+Define the isolated, bounded and recoverable development transport that injects deterministic PCM into the single public `MiniAEC Microphone` capture endpoint.
+
+## Requirements
 
 ### Requirement: Single public virtual microphone endpoint
-The system SHALL expose one Windows capture endpoint named `MiniAEC Microphone` for the validation driver and SHALL NOT expose the private producer transport as an additional public render or capture endpoint.
+The system SHALL expose one Windows capture endpoint named `MiniAEC Microphone` for the validation driver, SHALL make it eligible for user selection as a default input device in Windows system sound settings, SHALL NOT apply an endpoint property that prevents that selection, and SHALL NOT expose the private producer transport as an additional public render or capture endpoint.
 
 #### Scenario: Driver starts successfully
 - **WHEN** the validation driver is installed and started
 - **THEN** Windows audio endpoint enumeration shows exactly one new public capture endpoint named `MiniAEC Microphone`
+- **THEN** Windows system sound settings shows `MiniAEC Microphone` as a selectable default input candidate
 - **THEN** ordinary Windows recording and playback endpoint lists show no producer-only endpoint
+
+#### Scenario: User selects the virtual microphone as default input
+- **WHEN** the user selects `MiniAEC Microphone` as the default device for a Windows input role
+- **THEN** Windows reports `MiniAEC Microphone` as the current default endpoint for that role
+- **THEN** an ordinary recording client opened through that default capture role can capture from `MiniAEC Microphone`
 
 ### Requirement: Restricted private producer interface
 The system SHALL accept user-mode PCM through a versioned driver control interface that is not an audio endpoint or globally named shared-memory mapping, SHALL restrict the validation interface to SYSTEM and Administrators, and SHALL allow at most one active sender session.

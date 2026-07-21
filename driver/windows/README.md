@@ -48,4 +48,6 @@ driver\windows\scripts\validation-lifecycle.ps1 -Action Inventory
 
 Every signing, install, restart, and uninstall action prints the same plan and refuses to proceed without `-ConfirmSystemChanges`. Do not supply that switch until the user has explicitly approved the reviewed commands and rollback plan in [`VALIDATION.md`](VALIDATION.md).
 
+The endpoint is intentionally eligible for selection as the Windows system default input. Windows may assign one or more default input roles to `MiniAEC Microphone` when the package is installed; this Windows-originated change is accepted only when the before/after roles are recorded. Uninstall must verify that Windows restores the saved roles automatically or stop, report the exact difference, and obtain separate approval before restoring them. DevCon restart and package removal can leave a driver restart or service deletion pending until a full Windows reboot; the lifecycle script never performs that reboot itself.
+
 Test signing is only a local development mechanism. A distributable MiniAEC build requires a separately approved production certificate, package/installer design, upgrade policy, Windows compatibility validation, and the applicable Microsoft signing route.

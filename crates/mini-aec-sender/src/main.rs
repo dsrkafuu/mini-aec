@@ -12,6 +12,11 @@ use mini_aec_transport::{
 use mini_aec_windows_transport::WindowsVirtualMicrophoneSink;
 use serde::Serialize;
 
+const FRAME_DURATION_MILLIS: u64 = 10;
+const STARTUP_PREFILL_FRAMES: u64 = 3;
+const DRAIN_TIMEOUT: Duration = Duration::from_secs(1);
+const DRAIN_POLL_INTERVAL: Duration = Duration::from_millis(2);
+
 #[derive(Debug, Parser)]
 #[command(name = "mini-aec-sender")]
 #[command(about = "Send deterministic PCM to a MiniAEC virtual microphone transport")]
@@ -55,20 +60,46 @@ enum SenderEvent {
   },
   Diagnostics {
     session_id: String,
-    schema_version: u16,
-    accepted_frames: u64,
-    rejected_writes: u64,
-    underruns: u64,
-    overflows: u64,
-    discarded_frames: u64,
-    current_depth: u32,
-    high_water_mark: u32,
-    driver_restarts: u64,
+    #[serde(flatten)]
+    diagnostics: Box<DiagnosticsEvent>,
   },
   SessionClosed {
     session_id: String,
     frames_sent: u64,
   },
+}
+
+#[derive(Debug, Serialize)]
+struct DiagnosticsEvent {
+  baseline: DiagnosticsSnapshotEvent,
+  before_close: DiagnosticsSnapshotEvent,
+  after_close: DiagnosticsSnapshotEvent,
+  delta: DiagnosticCountersEvent,
+  drain_wait_milliseconds: u128,
+}
+
+#[derive(Debug, Serialize)]
+struct DiagnosticsSnapshotEvent {
+  schema_version: u16,
+  state: &'static str,
+  active_session: Option<String>,
+  last_accepted_sequence: Option<u64>,
+  current_depth: u32,
+  high_water_mark: u32,
+  counters: DiagnosticCountersEvent,
+}
+
+#[derive(Debug, Serialize)]
+struct DiagnosticCountersEvent {
+  session_opens: u64,
+  session_closes: u64,
+  session_resets: u64,
+  accepted_frames: u64,
+  rejected_writes: u64,
+  underruns: u64,
+  overflows: u64,
+  discarded_frames: u64,
+  driver_restarts: u64,
 }
 
 fn main() -> ExitCode {
@@ -112,6 +143,9 @@ fn send(
   session_id: SessionId,
   total_frames: u64,
 ) -> Result<()> {
+  let baseline = sink
+    .diagnostics()
+    .context("failed to read baseline transport diagnostics")?;
   let session = SessionConfig::new(session_id);
   sink
     .open_session(session)
@@ -128,7 +162,10 @@ fn send(
   let start = Instant::now();
   let send_result = (|| -> Result<()> {
     for expected_sequence in 0..total_frames {
-      let deadline = start + Duration::from_millis(expected_sequence.saturating_mul(10));
+      let paced_sequence =
+        expected_sequence.saturating_sub(STARTUP_PREFILL_FRAMES.saturating_sub(1));
+      let deadline =
+        start + Duration::from_millis(paced_sequence.saturating_mul(FRAME_DURATION_MILLIS));
       if let Some(delay) = deadline.checked_duration_since(Instant::now()) {
         thread::sleep(delay);
       }
@@ -152,28 +189,119 @@ fn send(
     Ok(())
   })();
 
-  let diagnostics_result = sink.diagnostics();
+  let drain_result = if send_result.is_ok() {
+    wait_for_drain(sink)
+  } else {
+    sink
+      .diagnostics()
+      .map(|diagnostics| (diagnostics, Duration::ZERO))
+  };
   let close_result = sink.close_session();
+  let after_close_result = sink.diagnostics();
   send_result?;
-  let diagnostics = diagnostics_result.context("failed to read transport diagnostics")?;
+  let (before_close, drain_wait) =
+    drain_result.context("failed to drain the virtual microphone transport")?;
   close_result.context("failed to close virtual microphone session")?;
+  let after_close = after_close_result.context("failed to read final transport diagnostics")?;
 
   emit(&SenderEvent::Diagnostics {
     session_id: format_session_id(session_id),
-    schema_version: diagnostics.schema_version,
-    accepted_frames: diagnostics.counters.accepted_frames,
-    rejected_writes: diagnostics.counters.rejected_writes,
-    underruns: diagnostics.counters.underruns,
-    overflows: diagnostics.counters.overflows,
-    discarded_frames: diagnostics.counters.discarded_frames,
-    current_depth: diagnostics.current_depth,
-    high_water_mark: diagnostics.high_water_mark,
-    driver_restarts: diagnostics.counters.driver_restarts,
+    diagnostics: Box::new(DiagnosticsEvent {
+      baseline: diagnostics_snapshot_event(&baseline),
+      before_close: diagnostics_snapshot_event(&before_close),
+      after_close: diagnostics_snapshot_event(&after_close),
+      delta: diagnostic_counter_delta(&after_close, &baseline),
+      drain_wait_milliseconds: drain_wait.as_millis(),
+    }),
   })?;
   emit(&SenderEvent::SessionClosed {
     session_id: format_session_id(session_id),
     frames_sent: total_frames,
   })
+}
+
+fn wait_for_drain(
+  sink: &dyn VirtualMicrophoneSink,
+) -> Result<(SinkDiagnostics, Duration), SinkError> {
+  let start = Instant::now();
+  loop {
+    let diagnostics = sink.diagnostics()?;
+    if diagnostics.current_depth == 0 {
+      return Ok((diagnostics, start.elapsed()));
+    }
+    if start.elapsed() >= DRAIN_TIMEOUT {
+      return Err(SinkError::new(
+        SinkErrorKind::TransportFailure,
+        format!(
+          "transport still holds {} frame(s) after {} ms",
+          diagnostics.current_depth,
+          DRAIN_TIMEOUT.as_millis()
+        ),
+      ));
+    }
+    thread::sleep(DRAIN_POLL_INTERVAL);
+  }
+}
+
+fn diagnostics_snapshot_event(diagnostics: &SinkDiagnostics) -> DiagnosticsSnapshotEvent {
+  DiagnosticsSnapshotEvent {
+    schema_version: diagnostics.schema_version,
+    state: match diagnostics.state {
+      SessionState::Closed => "closed",
+      SessionState::Open => "open",
+    },
+    active_session: diagnostics.active_session.map(format_session_id),
+    last_accepted_sequence: diagnostics.last_accepted_sequence,
+    current_depth: diagnostics.current_depth,
+    high_water_mark: diagnostics.high_water_mark,
+    counters: diagnostic_counters_event(diagnostics),
+  }
+}
+
+fn diagnostic_counters_event(diagnostics: &SinkDiagnostics) -> DiagnosticCountersEvent {
+  let counters = diagnostics.counters;
+  DiagnosticCountersEvent {
+    session_opens: counters.session_opens,
+    session_closes: counters.session_closes,
+    session_resets: counters.session_resets,
+    accepted_frames: counters.accepted_frames,
+    rejected_writes: counters.rejected_writes,
+    underruns: counters.underruns,
+    overflows: counters.overflows,
+    discarded_frames: counters.discarded_frames,
+    driver_restarts: counters.driver_restarts,
+  }
+}
+
+fn diagnostic_counter_delta(
+  current: &SinkDiagnostics,
+  baseline: &SinkDiagnostics,
+) -> DiagnosticCountersEvent {
+  let current = current.counters;
+  let baseline = baseline.counters;
+  DiagnosticCountersEvent {
+    session_opens: current.session_opens.saturating_sub(baseline.session_opens),
+    session_closes: current
+      .session_closes
+      .saturating_sub(baseline.session_closes),
+    session_resets: current
+      .session_resets
+      .saturating_sub(baseline.session_resets),
+    accepted_frames: current
+      .accepted_frames
+      .saturating_sub(baseline.accepted_frames),
+    rejected_writes: current
+      .rejected_writes
+      .saturating_sub(baseline.rejected_writes),
+    underruns: current.underruns.saturating_sub(baseline.underruns),
+    overflows: current.overflows.saturating_sub(baseline.overflows),
+    discarded_frames: current
+      .discarded_frames
+      .saturating_sub(baseline.discarded_frames),
+    driver_restarts: current
+      .driver_restarts
+      .saturating_sub(baseline.driver_restarts),
+  }
 }
 
 fn generated_session_id() -> Result<SessionId> {
