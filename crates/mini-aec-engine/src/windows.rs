@@ -8,8 +8,8 @@ use wasapi::{
 };
 
 use crate::{
-  source_is_public_endpoint, AudioInput, AudioInputFactory, PacketMetadata, SourceDescriptor,
-  SourceError, SourceErrorKind, SourceFormat, CHANNELS, SAMPLE_RATE_HZ,
+  source_is_public_endpoint, AudioInput, AudioInputFactory, InputRole, PacketMetadata,
+  SourceDescriptor, SourceError, SourceErrorKind, SourceFormat, CHANNELS, SAMPLE_RATE_HZ,
 };
 
 /// Stateless factory for exact-ID Windows capture streams.
@@ -17,7 +17,7 @@ use crate::{
 pub struct WindowsAudioInputFactory;
 
 impl AudioInputFactory for WindowsAudioInputFactory {
-  fn resolve(&self, endpoint_id: &str) -> Result<SourceDescriptor, SourceError> {
+  fn resolve(&self, role: InputRole, endpoint_id: &str) -> Result<SourceDescriptor, SourceError> {
     initialize_mta().ok().map_err(|error| {
       SourceError::new(
         SourceErrorKind::CaptureFailure,
@@ -26,8 +26,8 @@ impl AudioInputFactory for WindowsAudioInputFactory {
     })?;
     let enumerator =
       DeviceEnumerator::new().map_err(|error| map_wasapi("create the device enumerator", error))?;
-    let device = find_capture_device(&enumerator, endpoint_id)?;
-    let descriptor = describe_device(&device)?;
+    let device = find_device(&enumerator, role, endpoint_id)?;
+    let descriptor = describe_device(&device, role)?;
     if descriptor.endpoint_id != endpoint_id {
       return Err(SourceError::new(
         SourceErrorKind::InvalidSource,
@@ -37,20 +37,31 @@ impl AudioInputFactory for WindowsAudioInputFactory {
     Ok(descriptor)
   }
 
-  fn open(&self, source: &SourceDescriptor) -> Result<Box<dyn AudioInput>, SourceError> {
+  fn open(
+    &self,
+    role: InputRole,
+    source: &SourceDescriptor,
+  ) -> Result<Box<dyn AudioInput>, SourceError> {
+    if source.role != role {
+      return Err(SourceError::new(
+        SourceErrorKind::InvalidSource,
+        "endpoint descriptor role does not match the requested input role",
+      ));
+    }
     if !source.active {
       return Err(SourceError::new(
         SourceErrorKind::Unavailable,
         format!("capture endpoint {:?} is not active", source.friendly_name),
       ));
     }
-    if source_is_public_endpoint(source) {
+    if role == InputRole::Microphone && source_is_public_endpoint(source) {
       return Err(SourceError::new(
         SourceErrorKind::InvalidSource,
         "MiniAEC Microphone cannot be opened as its own physical source",
       ));
     }
-    WindowsAudioInput::open(&source.endpoint_id).map(|input| Box::new(input) as Box<dyn AudioInput>)
+    WindowsAudioInput::open(role, &source.endpoint_id)
+      .map(|input| Box::new(input) as Box<dyn AudioInput>)
   }
 }
 
@@ -75,7 +86,33 @@ pub fn enumerate_capture_endpoints() -> Result<Vec<SourceDescriptor>, SourceErro
     .into_iter()
     .map(|device| {
       let device = device.map_err(|error| map_wasapi("access a capture endpoint", error))?;
-      describe_device(&device)
+      describe_device(&device, InputRole::Microphone)
+    })
+    .collect()
+}
+
+/// Enumerates active Windows render endpoints with exact IDs and native-format metadata.
+///
+/// # Errors
+///
+/// Returns a project-owned error if COM or endpoint enumeration fails.
+pub fn enumerate_render_endpoints() -> Result<Vec<SourceDescriptor>, SourceError> {
+  initialize_mta().ok().map_err(|error| {
+    SourceError::new(
+      SourceErrorKind::CaptureFailure,
+      format!("failed to initialize COM for render endpoint enumeration: {error}"),
+    )
+  })?;
+  let enumerator =
+    DeviceEnumerator::new().map_err(|error| map_wasapi("create the device enumerator", error))?;
+  let collection = enumerator
+    .get_device_collection(&Direction::Render)
+    .map_err(|error| map_wasapi("enumerate render endpoints", error))?;
+  collection
+    .into_iter()
+    .map(|device| {
+      let device = device.map_err(|error| map_wasapi("access a render endpoint", error))?;
+      describe_device(&device, InputRole::RenderLoopback)
     })
     .collect()
 }
@@ -89,7 +126,7 @@ struct WindowsAudioInput {
 }
 
 impl WindowsAudioInput {
-  fn open(endpoint_id: &str) -> Result<Self, SourceError> {
+  fn open(role: InputRole, endpoint_id: &str) -> Result<Self, SourceError> {
     initialize_mta().ok().map_err(|error| {
       SourceError::new(
         SourceErrorKind::CaptureFailure,
@@ -98,8 +135,8 @@ impl WindowsAudioInput {
     })?;
     let enumerator = DeviceEnumerator::new()
       .map_err(|error| map_wasapi("create the capture device enumerator", error))?;
-    let device = find_capture_device(&enumerator, endpoint_id)?;
-    let current = describe_device(&device)?;
+    let device = find_device(&enumerator, role, endpoint_id)?;
+    let current = describe_device(&device, role)?;
     if !current.active {
       return Err(SourceError::new(
         SourceErrorKind::Unavailable,
@@ -109,7 +146,7 @@ impl WindowsAudioInput {
         ),
       ));
     }
-    if source_is_public_endpoint(&current) {
+    if role == InputRole::Microphone && source_is_public_endpoint(&current) {
       return Err(SourceError::new(
         SourceErrorKind::InvalidSource,
         "MiniAEC Microphone cannot be opened as its own physical source",
@@ -251,7 +288,7 @@ impl Drop for WindowsAudioInput {
   }
 }
 
-fn describe_device(device: &Device) -> Result<SourceDescriptor, SourceError> {
+fn describe_device(device: &Device, role: InputRole) -> Result<SourceDescriptor, SourceError> {
   let endpoint_id = device
     .get_id()
     .map_err(|error| map_wasapi("read the capture endpoint ID", error))?;
@@ -268,6 +305,7 @@ fn describe_device(device: &Device) -> Result<SourceDescriptor, SourceError> {
     bits_per_sample: format.get_validbitspersample(),
   });
   Ok(SourceDescriptor {
+    role,
     endpoint_id,
     friendly_name,
     active,
@@ -275,13 +313,18 @@ fn describe_device(device: &Device) -> Result<SourceDescriptor, SourceError> {
   })
 }
 
-fn find_capture_device(
+fn find_device(
   enumerator: &DeviceEnumerator,
+  role: InputRole,
   endpoint_id: &str,
 ) -> Result<Device, SourceError> {
+  let direction = match role {
+    InputRole::Microphone => Direction::Capture,
+    InputRole::RenderLoopback => Direction::Render,
+  };
   let collection = enumerator
-    .get_device_collection(&Direction::Capture)
-    .map_err(|error| map_wasapi("enumerate capture endpoints", error))?;
+    .get_device_collection(&direction)
+    .map_err(|error| map_wasapi("enumerate requested endpoints", error))?;
   for device in &collection {
     let device = device.map_err(|error| map_wasapi("access a capture endpoint", error))?;
     let candidate_id = device
@@ -293,7 +336,7 @@ fn find_capture_device(
   }
   Err(SourceError::new(
     SourceErrorKind::Unavailable,
-    format!("capture endpoint ID {endpoint_id:?} is unavailable or inactive"),
+    format!("{role:?} endpoint ID {endpoint_id:?} is unavailable or inactive"),
   ))
 }
 

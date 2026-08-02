@@ -10,5 +10,10 @@ tauri-build = { version = "2.6.3", features = [] }
 [dependencies]
 tauri = { version = "2.11.5", features = ["tray-icon"] }
 
+[target.'cfg(windows)'.dependencies]
+mini-aec-engine = { path = "../crates/mini-aec-engine" }
+mini-aec-transport = { path = "../crates/mini-aec-transport" }
+mini-aec-windows-transport = { path = "../crates/mini-aec-windows-transport" }
+
 [lints]
 workspace = true

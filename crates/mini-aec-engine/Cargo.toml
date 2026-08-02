@@ -11,6 +11,7 @@ test-support = []
 [dependencies]
 mini-aec-transport = { path = "../mini-aec-transport" }
 serde = { version = "1.0.228", features = ["derive"] }
+webrtc-audio-processing = { version = "~2.1.0", features = ["bundled"] }
 
 [target.'cfg(windows)'.dependencies]
 wasapi = "0.23.0"

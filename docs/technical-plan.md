@@ -1,6 +1,6 @@
 # MiniAEC 技术方案
 
-状态：M1 虚拟麦克风数据通路与 M2 实时 bypass 已通过开发期 elevated 路径验收；当前无活动 OpenSpec change；下一阶段为 M3 实时默认 AEC3，项目尚非可用 AEC 产品
+状态：M1 虚拟麦克风数据通路与 M2 实时 bypass 已通过开发期 elevated 路径验收；活动 OpenSpec change `implement-realtime-default-aec` 已实现 M3 的仓库内实时默认 AEC3 路径并通过合成自动化验证。单独批准的 elevated 真机测试已完成 Windows Recorder 与 Discord 消费，较大音量 far-end 抑制、near-end-only、render silence/recovery、sender contention 与 stop/start 表现符合预期，但 double-talk 出现明显近端吞字，不满足声学验收要求；用户手动重启后的最终只读清单已验证设备、端点、驱动包、证书、服务、默认角色和 TESTSIGNING 状态全部完成回滚。因此项目仍不是已验收的可用 AEC 产品
 
 目标平台：Windows 11 x64
 
@@ -39,9 +39,9 @@ flowchart LR
   Mic["物理麦克风"] --> Capture["WASAPI capture"]
   Capture --> Normalize["格式归一化和 10 ms 分帧"]
   Loopback --> Normalize
-  Normalize --> Align["时间对齐和漂移控制"]
+  Normalize --> Align["有界 QPC 时间对齐"]
   Align --> AEC["EchoCanceller boundary / WebRTC AEC3"]
-  AEC --> Safety["有限数检查、静音和显式旁路"]
+  AEC --> Safety["有限数检查、静音和有界重建"]
   Safety --> Bridge["VirtualMicrophoneSink boundary"]
   Bridge --> Driver["MiniAEC Microphone"]
   Driver --> Downstream["可选二级降噪或会议软件"]
@@ -53,29 +53,28 @@ flowchart LR
 
 ### 2.1 Tauri 托盘宿主
 
-Tauri 只负责进程生命周期和低频控制面：
+Tauri 只负责进程生命周期和低频控制面。M3 当前实现包含：
 
 - 当前状态；
 - AEC 启用或显式旁路；
-- 物理麦克风和回放设备选择；
 - 重启音频引擎；
-- 开机启动；
-- 打开日志目录；
+- 从 `MINI_AEC_MICROPHONE_ID` 和 `MINI_AEC_RENDER_ID` 读取精确的开发期 endpoint ID；
 - 退出。
 
-不创建 WebView 或主窗口。Tauri runtime 不处理 PCM，托盘销毁也不能意外穿透实时线程边界。
+物理设备选择界面、设置持久化、默认设备自动跟随、开机启动和打开日志目录不属于 M3。不创建 WebView 或主窗口。Tauri runtime 不处理 PCM，托盘销毁也不能意外穿透实时线程边界。
 
 ### 2.2 Rust 音频引擎
 
-`crates/mini-aec-engine/` 已建立并负责设备生命周期、预分配缓冲、格式转换、10 ms 调度、虚拟麦克风输出和故障状态。它能脱离 Tauri 测试；render 同步和 AEC 编排保留给后续里程碑。
+`crates/mini-aec-engine/` 负责双输入设备生命周期、预分配缓冲、格式转换、10 ms 调度、有界 QPC 同步、默认 AEC、虚拟麦克风输出和故障状态。它能脱离 Tauri 运行合成测试。
 
 已建立的核心边界包括：
 
-- `AudioInput`：当前承载显式选择的物理 capture；M3 需要把输入角色扩展到物理 render loopback，同时保持 Windows 类型不泄漏；
+- `AudioInput` / `AudioInputFactory`：承载显式选择且角色校验的物理 microphone capture 与 physical render loopback，Windows 类型不泄漏；
+- `EchoCanceller` / `EchoCancellerFactory`：定义 render-first 处理、capture 输出与 adapter 重建，WebRTC 类型只存在于默认 M131 adapter；
 - `VirtualMicrophoneSink`：向驱动提交处理后 PCM；
-- `EngineController` / `EngineSnapshot`：非实时控制和只读状态。
+- `Engine` / `EngineSnapshot`：非实时控制、只读状态、同步/AEC/队列/处理时延/故障诊断。
 
-M3 将新增项目级 `EchoCanceller` 和有界双路同步边界，负责 render 分析、capture 处理、reset、故障状态和元数据诊断；WebRTC 类型只能存在于默认 M131 adapter 内。
+M3 的处理 worker 独占同步器、`EchoCanceller` 和一次 sink session；两个输入 worker 分别在自己的线程创建、使用、停止并销毁 COM/WASAPI 对象。三个 worker 使用有限等待和有界队列，停止或显式 restart 会 join 全部 worker、清空 PCM 和同步/AEC 状态，并从协议 sequence 零开始新 session。
 
 WebRTC、WASAPI、Tauri 和驱动通信类型不能泄漏到这些项目级合同之外。
 
@@ -90,13 +89,22 @@ M2 的实时 bypass 合同固定为：
 
 当前验证驱动的控制 DACL 只允许 SYSTEM 和 Administrators，因此 headless bypass 的真机端到端验证是开发期 elevated 路径。普通用户托盘如何访问正式签名驱动仍属于后续安装/权限架构，M2 不对其作推断。显式 bypass 是独立里程碑，不是 AEC 故障时静默泄漏原始麦克风的回退策略。
 
+M3 实时 AEC 合同固定为：
+
+- 配置必须同时提供精确的物理 capture endpoint ID 与物理 render endpoint ID；角色不符、inactive、不可访问或不存在均失败，不回退到默认设备；
+- microphone 与 render 各使用八帧 latest-wins 同步队列；以 microphone 为处理节拍，在统一 QPC 时间线上按 5 ms 容差配对，记录 stale、silent-reference、overflow、discard、discontinuity 与 timestamp error；
+- 单帧绝对偏差超过 100 ms 时 reference 视为不可用；带 render 时间戳但连续 50 个 capture 帧仍无法配对时终止当前 run。物理播放完全静音时，active loopback endpoint 合法地可能不产生 packet，此时持续使用计数静音参考并保持可见 `Degraded`，不能仅因没有 render timestamp 终止或切换 bypass；恢复十个连续健康配对帧后才回到 `RunningAec`；
+- discontinuity 或 timestamp error 清空受影响的部分帧并建立新同步 epoch，同时重建 AEC；无效 AEC 输出当前帧静音并有界重建，连续三次处理失败后终止；
+- 生命周期包含 `RunningAec` 与 `Degraded`，任何 AEC、同步、输入或 sink 的终止错误都进入 `Failed`，不会自动切换到 `RunningBypass`；
+- 处理耗时以固定桶记录 P50/P95/P99/maximum，10 ms deadline miss 与全部诊断写盘都不阻塞实时 worker。
+
 ### 2.3 Windows 音频适配
 
 使用 WASAPI 直接访问物理 capture、render loopback、事件驱动缓冲、设备位置和 QPC 时间戳。不能用跨平台抽象隐藏 Windows 的 loopback、设备通知或时序信息。
 
 ### 2.4 AEC 适配
 
-当前基线为 `webrtc-audio-processing 2.1.0` 和 FreeDesktop M131 源码。只启用完整 AEC，使用 AEC3 上游默认参数；NS、AGC 和实验配置关闭。
+当前基线为 `webrtc-audio-processing 2.1.0` 和 FreeDesktop M131 源码。实时 adapter 使用 `Processor::new(48_000)`，只启用完整 AEC，使用 AEC3 上游默认参数；stream delay 不设置，NS、AGC、实验配置和后处理关闭。每个匹配的 render frame 先于 capture frame 提交，adapter 自有并复用通道缓冲，输出必须为有限值。
 
 依赖来源和本地构建修改以 [`vendor/UPSTREAM.md`](../vendor/UPSTREAM.md) 为准。升级必须遵循 [`upstream-upgrade-plan.md`](upstream-upgrade-plan.md)。
 
@@ -130,7 +138,7 @@ M2 的实时 bypass 合同固定为：
 6. 检查非有限数和输出范围；
 7. 把结果写入虚拟麦克风数据通路。
 
-麦克风和 Sound Blaster 等播放设备可能使用独立硬件时钟。短期对齐不能证明长期稳定，因此实时链路建立后必须记录 timestamp delta、buffer depth、discontinuity 和 drift。确认持续误差后再实现小比例异步重采样，不能长期靠整帧丢弃或补零维持同步。
+麦克风和 Sound Blaster 等播放设备可能使用独立硬件时钟。M3 只实现上节记录的有界短期对齐和终止策略；这不能证明长期稳定，也不宣称漂移校正。真机验收必须记录 timestamp delta、buffer depth、discontinuity 和长期方向，确认持续误差后再在 M4 设计小比例异步重采样，不能长期靠整帧丢弃或补零维持同步。
 
 ## 5. 故障策略
 
@@ -140,7 +148,7 @@ M2 的实时 bypass 合同固定为：
 | 麦克风数据不足 | 输出对应时长静音，不重复旧音频 |
 | AEC 错误或非有限数 | 当前帧静音、进入 degraded 并重建处理器；不得静默泄漏原始回声 |
 | 用户明确关闭 AEC | 使用可见的 raw microphone bypass 状态 |
-| 输入或回放设备变化 | 停止旧流、清空缓冲、重建流并 reset AEC |
+| 输入或回放设备 invalidation | 当前 run 终止、清空缓冲并进入 `Failed`；只能由显式 restart 建立新流 |
 | 用户态进程失联 | 驱动输出静音，不重复最后一帧 |
 | 诊断写盘过慢 | 丢诊断帧并计数，不能阻塞实时路径 |
 
@@ -152,9 +160,9 @@ M2 的实时 bypass 合同固定为：
 mini-aec/
 ├─ Cargo.toml
 ├─ crates/
-│  ├─ mini-aec-lab/       # 已有：采集、QPC 对齐、默认 AEC 离线验证
-│  └─ mini-aec-engine/    # 已有：M2 实时 bypass、项目级边界和 Windows capture adapter
-├─ src-tauri/             # 已有：无窗口托盘宿主
+│  ├─ mini-aec-lab/       # 已有：采集、离线 AEC、headless bypass 与实时默认 AEC
+│  └─ mini-aec-engine/    # 已有：双输入同步、默认 AEC、bypass、项目级边界和 Windows adapter
+├─ src-tauri/             # 已有：连接 engine controller 的无窗口托盘宿主
 ├─ driver/windows/        # SysVAD 来源、驱动和安装边界
 ├─ docs/
 ├─ vendor/
@@ -203,7 +211,7 @@ mini-aec/
 - 托盘显示 running/degraded/bypass；
 - 在真实外放、近端单讲和双讲中端到端验证。
 
-这是当前下一阶段，尚未创建 OpenSpec change。建议 capability 为 `realtime-echo-cancellation`，change 名称为 `implement-realtime-default-aec`。该阶段只建立默认算法的实时产品链路和可观察故障行为，不包含 AEC 调参、依赖升级、长期漂移补偿、普通用户驱动权限、安装或生产签名。
+活动 OpenSpec change 为 `implement-realtime-default-aec`，capability 包含 `realtime-audio-engine` 与 `realtime-echo-cancellation` 的 delta specs。仓库内实现、headless `realtime-aec`、托盘控制和合成自动化验证已建立；单独审批的真机测试完成了 Windows Recorder 与 Discord 消费及全部声学场景评估，完整 rollback 也已由用户手动重启后的最终只读清单验证。Far-end-only（包括较大播放音量）、near-end-only 和 render silence/recovery 符合预期，但 double-talk 的明显近端吞字不满足验收合同，因此本阶段仍未 accepted。该阶段只建立默认算法的实时产品链路和可观察故障行为，不包含 AEC 调参、依赖升级、长期漂移补偿、普通用户驱动权限、安装或生产签名。
 
 ### M4：漂移与稳定性
 
@@ -242,4 +250,4 @@ mini-aec/
 
 ## 10. SDD 状态
 
-仓库使用 OpenSpec 的 `spec-driven` schema 和 Codex 集成。M1 的 `virtual-microphone-transport` 与 `driver-development-lifecycle` capability 已 accepted，完成的 change 保存在 archive；`implement-realtime-microphone-bypass` 的 29 项任务与单独审批的 acceptance 已完成，新增的 `realtime-audio-engine` capability 已同步到主 specs，change 已归档。当前 `openspec list --json` 无活动 change；M3 必须从新 proposal 开始，不能修改已归档的 M1/M2 artifacts。
+仓库使用 OpenSpec 的 `spec-driven` schema 和 Codex 集成。M1 的 `virtual-microphone-transport` 与 `driver-development-lifecycle` capability 已 accepted，完成的 change 保存在 archive；`implement-realtime-microphone-bypass` 的 29 项任务与单独审批的 acceptance 已完成，`realtime-audio-engine` capability 已同步到主 specs，change 已归档。当前活动 change 为 `implement-realtime-default-aec`；仓库内实现、自动化验证和文档任务与需要单独批准的第 9 组 Windows/声学验收明确分开，后者未完成时不得归档或宣称 M3 accepted。

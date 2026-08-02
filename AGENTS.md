@@ -47,6 +47,11 @@ Before changing audio capture, synchronization, AEC, dependencies, the virtual d
 - Test signing is development-only. A distributable build requires an approved production signing and installer strategy.
 - Never install, update, or remove a driver without explicit user approval and a rollback path.
 
+## System restart safety
+
+- Never initiate, schedule, or invoke an operating-system restart, shutdown, or sign-out command. If a workflow requires one, explain why and stop so the user can save their work and perform the action manually.
+- Prior approval for a broader validation, installation, rollback, or recovery plan does not authorize an agent-initiated restart, shutdown, or sign-out. Only the user performs these actions, even when they are required to continue the approved plan.
+
 ## Validation and privacy
 
 - Algorithm changes require old/new processing of identical inputs. Compare far-end removal, convergence, double-talk voice preservation, runtime, and failure behavior; suppression alone is insufficient.

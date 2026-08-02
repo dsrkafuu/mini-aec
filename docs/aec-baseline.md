@@ -16,7 +16,7 @@ MiniAEC has one active acoustic echo cancellation baseline:
 | Gain control               | disabled                                       |
 | Product post-processing    | none                                           |
 
-`mini-aec-lab` creates the processor with `Processor::new(48_000)` and enables full echo cancellation through the stable high-level configuration. It does not enable `experimental-aec3-config`, expose a tuning profile, or export the linear pre-suppressor signal.
+Both the offline lab path and real-time `DefaultEchoCanceller` adapter create the processor with `Processor::new(48_000)` and enable full echo cancellation through the stable high-level configuration. They do not enable `experimental-aec3-config`, expose a tuning profile, or export the linear pre-suppressor signal. The real-time adapter leaves stream delay unset, reuses adapter-owned channel buffers, submits render before capture, and rejects non-finite output behind the project-owned `EchoCanceller` boundary.
 
 The exact source chain and Windows build adaptations are recorded in [`vendor/UPSTREAM.md`](../vendor/UPSTREAM.md).
 
@@ -33,9 +33,11 @@ These facts justify retaining the capture, alignment, reporting, and default AEC
 
 ## Current product-path status
 
-The M1 `MiniAEC Microphone` transport and M2 real-time physical-microphone bypass are now validated on the approved elevated development path. The driver accepts continuous fixed-format user-mode PCM, ordinary Windows capture clients can consume the public endpoint, and `mini-aec-engine` can carry one explicitly selected physical microphone through bounded normalization, framing, queueing and sink-session lifecycle without stale-frame replay.
+The M1 `MiniAEC Microphone` transport and M2 real-time physical-microphone bypass are validated on the approved elevated development path. The driver accepts continuous fixed-format user-mode PCM, ordinary Windows capture clients can consume the public endpoint, and `mini-aec-engine` can carry one explicitly selected physical microphone through bounded normalization, framing, queueing and sink-session lifecycle without stale-frame replay.
 
-Those results close the first two prerequisites below. They do not yet validate real-time echo cancellation: the engine still has one capture input, reports `RunningBypass`, does not capture a render-loopback reference and does not invoke WebRTC AEC3.
+The active M3 change now implements two explicitly role-checked WASAPI inputs, capture-paced QPC pairing, the frozen default real-time adapter, `RunningAec`/`Degraded`/`Failed` behavior, metadata-only JSONL evidence, a headless `realtime-aec` command, and tray AEC/bypass control. Synthetic engine, adapter, CLI, and tray tests validate the repository behavior without installing a driver. A separately approved elevated run exercised the installed transport through Windows Recorder and Discord. Far-end removal remained effective at the tested louder playback level, near-end-only speech was natural, and render silence/recovery had no audible stale replay or discontinuity, but double-talk produced obvious near-end swallowing. The frozen default baseline therefore fails the current double-talk acceptance requirement. Final read-only inventory after the user-performed restart verified complete rollback of the validation device, endpoint, package, certificates, service, default roles and TESTSIGNING state.
+
+The implemented synchronization policy uses two eight-frame latest-wins queues, 5 ms pairing tolerance, a 100 ms maximum skew observation, 50 consecutive timestamp-bearing unpairable intervals before terminal synchronization failure, and ten healthy pairs before degraded recovery. An active render endpoint may legally provide no loopback packets while playback is silent; those intervals use counted silent references and remain visibly degraded without terminating or switching to bypass. Invalid AEC frames are silenced and the adapter is reconstructed; three consecutive processing failures terminate the run. This is bounded startup/recovery behavior, not long-run hardware-clock drift correction.
 
 ## What was reset
 
@@ -99,9 +101,9 @@ Offline WAV output is now a diagnostic, not the final acceptance surface. The de
 
 1. Completed in M1: a bundled `MiniAEC Microphone` endpoint receives continuous user-mode PCM.
 2. Completed in M2: the physical microphone passes through that endpoint without AEC on the elevated development path.
-3. Pending in M3: the real-time engine supplies an explicitly selected physical render loopback to the frozen default AEC3 adapter and aligns it with microphone frames on a bounded QPC timeline.
-4. Pending in M3: Windows Recorder and at least one target meeting application consume the AEC output through `MiniAEC Microphone` without unexplained discontinuities.
-5. Pending in M3: the same acoustic scenarios are assessed both directly and after the intended downstream noise suppressor.
+3. Implemented and automated in M3: the real-time engine supplies an explicitly selected physical render loopback to the frozen default AEC3 adapter and aligns it with microphone frames on a bounded QPC timeline.
+4. Completed in M3 validation: Windows Recorder and Discord consumed the AEC output through `MiniAEC Microphone`; the scored client intervals had no reported unexplained discontinuity or stale replay.
+5. Assessed but failed in M3 validation: far-end-only, near-end-only and render silence/recovery met their listening checks, while double-talk had obvious near-end swallowing and did not meet the acceptance matrix.
 
 The minimum acoustic matrix is:
 
@@ -118,6 +120,6 @@ Only after this end-to-end default baseline exposes a repeatable blocker may a n
 
 ## Next action
 
-Do not record another tuning sample or alter the frozen M131 baseline. The next highest-value capability is real-time default AEC3: extend `mini-aec-engine` with an explicit physical render-loopback input, bounded QPC-based synchronization, a project-owned `EchoCanceller` boundary and metadata-only AEC diagnostics, then validate the output end to end through `MiniAEC Microphone`.
+Do not alter the frozen M131 baseline inside this change. The remaining product blocker is the reproducible double-talk near-end swallowing; any algorithm experiment requires a separate approved change, identical-input old/new evidence, and preservation of the demonstrated far-end removal.
 
-M3 should collect timestamp delta, buffer depth, discontinuity, underrun and drift evidence, but it should not pre-emptively add asynchronous resampling. Sustained clock-error correction belongs to M4 after measurements establish its direction and required control range. Normal-user driver access, installation and production signing remain separate M5 concerns.
+M3 metadata collects timestamp delta, buffer depth, discontinuity, underrun and bounded processing evidence, but it does not claim asynchronous resampling or sustained clock-error correction. That belongs to M4 after measurements establish its direction and required control range. Normal-user driver access, installation and production signing remain separate M5 concerns.

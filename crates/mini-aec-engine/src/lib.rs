@@ -3,9 +3,11 @@
 //! This crate owns lifecycle, normalization, framing, bounded buffering and diagnostics. Windows,
 //! CLI and UI details are adapters around the project-owned contracts exposed here.
 
+mod aec;
 mod framing;
 mod queue;
 mod runtime;
+mod synchronization;
 
 #[cfg(any(test, feature = "test-support"))]
 pub mod test_support;
@@ -21,6 +23,9 @@ use mini_aec_transport::{
 };
 use serde::Serialize;
 
+pub use aec::{
+  DefaultEchoCancellerFactory, EchoCanceller, EchoCancellerError, EchoCancellerFactory,
+};
 pub use runtime::Engine;
 
 /// Public capture endpoint exposed by the `MiniAEC` driver.
@@ -32,17 +37,55 @@ pub const CHANNELS: u16 = 1;
 /// Maximum time an input read may wait before observing cancellation.
 pub const INPUT_WAIT: Duration = Duration::from_millis(100);
 
-/// Configuration for one explicit physical-microphone bypass run.
+/// Product processing mode selected explicitly by the controller.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ProcessingMode {
+  Bypass,
+  Aec,
+}
+
+/// Role of one explicitly selected physical Windows endpoint.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum InputRole {
+  Microphone,
+  RenderLoopback,
+}
+
+/// Configuration for one explicit real-time engine run.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct EngineConfig {
-  pub source_endpoint_id: String,
+  pub mode: ProcessingMode,
+  pub microphone_endpoint_id: String,
+  pub render_endpoint_id: Option<String>,
 }
 
 impl EngineConfig {
+  /// Creates an explicit physical-microphone bypass configuration.
   #[must_use]
   pub fn new(source_endpoint_id: impl Into<String>) -> Self {
+    Self::bypass(source_endpoint_id)
+  }
+
+  #[must_use]
+  pub fn bypass(microphone_endpoint_id: impl Into<String>) -> Self {
     Self {
-      source_endpoint_id: source_endpoint_id.into(),
+      mode: ProcessingMode::Bypass,
+      microphone_endpoint_id: microphone_endpoint_id.into(),
+      render_endpoint_id: None,
+    }
+  }
+
+  #[must_use]
+  pub fn aec(
+    microphone_endpoint_id: impl Into<String>,
+    render_endpoint_id: impl Into<String>,
+  ) -> Self {
+    Self {
+      mode: ProcessingMode::Aec,
+      microphone_endpoint_id: microphone_endpoint_id.into(),
+      render_endpoint_id: Some(render_endpoint_id.into()),
     }
   }
 }
@@ -63,8 +106,20 @@ pub enum EngineState {
   Stopped,
   Starting,
   RunningBypass,
+  RunningAec,
+  Degraded,
   Stopping,
   Failed,
+}
+
+/// Observable reason an AEC run is temporarily impaired.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DegradationReason {
+  RenderReferenceMissing,
+  AecReset,
+  ProcessingDeadline,
+  QueuePressure,
 }
 
 /// Native metadata retained for the explicitly selected capture endpoint.
@@ -78,6 +133,7 @@ pub struct SourceFormat {
 /// Project-owned capture endpoint identity and display metadata.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct SourceDescriptor {
+  pub role: InputRole,
   pub endpoint_id: String,
   pub friendly_name: String,
   pub active: bool,
@@ -160,14 +216,18 @@ pub trait AudioInputFactory: Send + Sync {
   /// # Errors
   ///
   /// Returns an actionable source error when the endpoint is absent, inactive or inaccessible.
-  fn resolve(&self, endpoint_id: &str) -> Result<SourceDescriptor, SourceError>;
+  fn resolve(&self, role: InputRole, endpoint_id: &str) -> Result<SourceDescriptor, SourceError>;
 
   /// Opens the resolved endpoint on the calling capture worker thread.
   ///
   /// # Errors
   ///
   /// Returns an actionable source error when the stream cannot be initialized.
-  fn open(&self, source: &SourceDescriptor) -> Result<Box<dyn AudioInput>, SourceError>;
+  fn open(
+    &self,
+    role: InputRole,
+    source: &SourceDescriptor,
+  ) -> Result<Box<dyn AudioInput>, SourceError>;
 }
 
 /// Creates one virtual microphone adapter for each engine run.
@@ -190,6 +250,12 @@ pub enum EngineErrorKind {
   SourceAccessDenied,
   SourceInvalidated,
   SourceFailure,
+  RenderUnavailable,
+  RenderAccessDenied,
+  RenderInvalidated,
+  RenderFailure,
+  SynchronizationFailure,
+  EchoCancellerFailure,
   DriverUnavailable,
   SinkAccessDenied,
   SenderBusy,
@@ -216,13 +282,27 @@ impl EngineError {
     }
   }
 
-  pub(crate) fn from_source(error: SourceError) -> Self {
-    let kind = match error.kind {
-      SourceErrorKind::InvalidSource => EngineErrorKind::InvalidSource,
-      SourceErrorKind::Unavailable => EngineErrorKind::SourceUnavailable,
-      SourceErrorKind::AccessDenied => EngineErrorKind::SourceAccessDenied,
-      SourceErrorKind::DeviceInvalidated => EngineErrorKind::SourceInvalidated,
-      SourceErrorKind::CaptureFailure => EngineErrorKind::SourceFailure,
+  pub(crate) fn from_source(role: InputRole, error: SourceError) -> Self {
+    let kind = match (role, error.kind) {
+      (_, SourceErrorKind::InvalidSource) => EngineErrorKind::InvalidSource,
+      (InputRole::Microphone, SourceErrorKind::Unavailable) => EngineErrorKind::SourceUnavailable,
+      (InputRole::Microphone, SourceErrorKind::AccessDenied) => EngineErrorKind::SourceAccessDenied,
+      (InputRole::Microphone, SourceErrorKind::DeviceInvalidated) => {
+        EngineErrorKind::SourceInvalidated
+      }
+      (InputRole::Microphone, SourceErrorKind::CaptureFailure) => EngineErrorKind::SourceFailure,
+      (InputRole::RenderLoopback, SourceErrorKind::Unavailable) => {
+        EngineErrorKind::RenderUnavailable
+      }
+      (InputRole::RenderLoopback, SourceErrorKind::AccessDenied) => {
+        EngineErrorKind::RenderAccessDenied
+      }
+      (InputRole::RenderLoopback, SourceErrorKind::DeviceInvalidated) => {
+        EngineErrorKind::RenderInvalidated
+      }
+      (InputRole::RenderLoopback, SourceErrorKind::CaptureFailure) => {
+        EngineErrorKind::RenderFailure
+      }
     };
     Self::new(kind, error.message)
   }
@@ -254,9 +334,12 @@ impl Error for EngineError {}
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize)]
 pub struct EngineSnapshot {
   pub state: EngineState,
+  pub mode: Option<ProcessingMode>,
   pub source: Option<SourceDescriptor>,
+  pub render_source: Option<SourceDescriptor>,
   pub run_id: Option<u128>,
   pub session_id: Option<u128>,
+  pub aec_instance_id: Option<u128>,
   pub captured_packets: u64,
   pub captured_samples: u64,
   pub silent_packets: u64,
@@ -274,7 +357,45 @@ pub struct EngineSnapshot {
   pub sink_diagnostics_latest: Option<SinkTransportSnapshot>,
   pub last_device_position: Option<u64>,
   pub last_qpc_timestamp_100ns: Option<u64>,
+  pub render_packets: u64,
+  pub render_samples: u64,
+  pub render_silent_packets: u64,
+  pub render_discontinuities: u64,
+  pub render_timestamp_errors: u64,
+  pub render_sanitized_samples: u64,
+  pub render_frames: u64,
+  pub render_queue_depth: u32,
+  pub render_queue_high_water: u32,
+  pub render_queue_overflows: u64,
+  pub render_discarded_frames: u64,
+  pub last_render_device_position: Option<u64>,
+  pub last_render_qpc_timestamp_100ns: Option<u64>,
+  pub synchronization_epoch: u64,
+  pub synchronization_origin_qpc_100ns: Option<u64>,
+  pub current_delta_100ns: Option<i64>,
+  pub maximum_absolute_skew_100ns: u64,
+  pub paired_frames: u64,
+  pub silent_render_references: u64,
+  pub stale_render_frames: u64,
+  pub alignment_resets: u64,
+  pub aec_processed_frames: u64,
+  pub aec_resets: u64,
+  pub aec_rebuilds: u64,
+  pub aec_invalid_outputs: u64,
+  pub processing_deadline_misses: u64,
+  pub processing_time: ProcessingTimeSnapshot,
+  pub degradation_reason: Option<DegradationReason>,
   pub last_error: Option<EngineError>,
+}
+
+/// Bounded integer processing-time percentiles in microseconds.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize)]
+pub struct ProcessingTimeSnapshot {
+  pub samples: u64,
+  pub p50_us: u64,
+  pub p95_us: u64,
+  pub p99_us: u64,
+  pub maximum_us: u64,
 }
 
 /// Engine-owned serialization of the virtual sink's versioned transport diagnostics.

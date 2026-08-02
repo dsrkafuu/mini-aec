@@ -14,11 +14,18 @@ pub struct BypassConfig {
   pub microphone_endpoint_id: String,
 }
 
+pub struct RealtimeAecConfig {
+  pub duration: Duration,
+  pub output_root: PathBuf,
+  pub microphone_endpoint_id: String,
+  pub render_endpoint_id: String,
+}
+
 #[cfg(windows)]
 mod windows;
 
 #[cfg(windows)]
-pub use windows::{bypass, capture, list_devices};
+pub use windows::{bypass, capture, list_devices, realtime_aec};
 
 #[cfg(not(windows))]
 pub fn list_devices(_json: bool) -> anyhow::Result<()> {
@@ -33,4 +40,9 @@ pub fn capture(_config: CaptureConfig) -> anyhow::Result<()> {
 #[cfg(not(windows))]
 pub fn bypass(_config: BypassConfig) -> anyhow::Result<()> {
   anyhow::bail!("mini-aec-lab bypass currently supports Windows only")
+}
+
+#[cfg(not(windows))]
+pub fn realtime_aec(_config: RealtimeAecConfig) -> anyhow::Result<()> {
+  anyhow::bail!("mini-aec-lab real-time AEC currently supports Windows only")
 }

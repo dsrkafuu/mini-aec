@@ -3,6 +3,7 @@ logs/
 *.log
 /target
 artifacts/
+driver/windows/out/
 .tools/
 *.local
 

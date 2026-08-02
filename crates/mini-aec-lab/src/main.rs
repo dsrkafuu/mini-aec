@@ -29,6 +29,8 @@ enum Command {
   Aec(AecArgs),
   /// Bypass one explicit physical microphone into `MiniAEC Microphone` in real time.
   Bypass(BypassArgs),
+  /// Run default WebRTC M131 AEC in real time with exact physical endpoint IDs.
+  RealtimeAec(RealtimeAecArgs),
 }
 
 #[derive(Debug, Args)]
@@ -80,6 +82,25 @@ struct BypassArgs {
   output: PathBuf,
 }
 
+#[derive(Debug, Args)]
+struct RealtimeAecArgs {
+  /// Exact physical capture endpoint ID. Friendly names and defaults are not accepted.
+  #[arg(long)]
+  microphone_id: String,
+
+  /// Exact physical render endpoint ID whose loopback is the AEC reference.
+  #[arg(long)]
+  render_id: String,
+
+  /// Run duration in seconds.
+  #[arg(long)]
+  duration: u64,
+
+  /// Parent directory for metadata-only validation runs.
+  #[arg(long, default_value = "driver/windows/out/validation/engine-aec")]
+  output: PathBuf,
+}
+
 fn main() -> Result<()> {
   let cli = Cli::parse();
 
@@ -100,6 +121,12 @@ fn main() -> Result<()> {
       duration: Duration::from_secs(args.duration),
       output_root: args.output,
       microphone_endpoint_id: args.microphone_id,
+    }),
+    Command::RealtimeAec(args) => platform::realtime_aec(platform::RealtimeAecConfig {
+      duration: Duration::from_secs(args.duration),
+      output_root: args.output,
+      microphone_endpoint_id: args.microphone_id,
+      render_endpoint_id: args.render_id,
     }),
   }
 }
@@ -160,5 +187,47 @@ mod tests {
       .command,
       Command::Bypass(_)
     ));
+  }
+
+  #[test]
+  fn realtime_aec_requires_both_exact_ids_and_duration_without_tuning() {
+    assert!(Cli::try_parse_from(["mini-aec-lab", "realtime-aec"]).is_err());
+    assert!(Cli::try_parse_from([
+      "mini-aec-lab",
+      "realtime-aec",
+      "--microphone-id",
+      "mic",
+      "--render-id",
+      "render"
+    ])
+    .is_err());
+    assert!(matches!(
+      Cli::try_parse_from([
+        "mini-aec-lab",
+        "realtime-aec",
+        "--microphone-id",
+        "mic",
+        "--render-id",
+        "render",
+        "--duration",
+        "30"
+      ])
+      .expect("complete real-time AEC arguments parse")
+      .command,
+      Command::RealtimeAec(_)
+    ));
+    assert!(Cli::try_parse_from([
+      "mini-aec-lab",
+      "realtime-aec",
+      "--microphone-id",
+      "mic",
+      "--render-id",
+      "render",
+      "--duration",
+      "30",
+      "--stream-delay-ms",
+      "60"
+    ])
+    .is_err());
   }
 }
