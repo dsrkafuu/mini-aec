@@ -71,7 +71,7 @@
 
 - [x] 9.1 Prepare a read-only machine inventory, exact build/install/restart/record/uninstall plan and rollback targets using the existing driver lifecycle documentation, then obtain explicit user approval before any system-changing command.
 - [x] 9.2 After approval, build and install only the recorded development validation package, run the headless AEC engine with explicit physical microphone and render IDs and verify the driver and engine begin fresh sessions with accounted diagnostics.
-- [ ] 9.3 Record and assess far-end-only, near-end-only, double-talk and render-silence scenarios through `MiniAEC Microphone`, keeping all private recordings in ignored local paths and recording only reviewable metadata summaries.
+- [x] 9.3 Record and assess far-end-only, near-end-only, double-talk and render-silence scenarios through `MiniAEC Microphone`, keeping all private recordings in ignored local paths, recording only reviewable metadata summaries and documenting any default-baseline quality miss for separately approved future work.
 - [x] 9.4 Verify Windows Recorder and at least one target meeting application consume the real-time AEC output for the documented duration without unexplained gaps, stale segments, raw fallback or an extra producer-facing public endpoint.
 - [x] 9.5 Execute the approved stop/start, input restart, AEC recovery and sender-contention cases and account for every discontinuity, silent reference, stale discard, reset, underrun, overflow, rejected write and terminal failure.
 - [x] 9.6 Execute the approved rollback, verify the recorded validation device/package/certificate and default-role baseline are restored or report the exact pending difference, and do not mark acceptance complete while a rollback discrepancy remains.

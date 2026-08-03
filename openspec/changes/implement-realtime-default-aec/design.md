@@ -69,6 +69,12 @@ The Tauri host will construct or connect to the project-owned engine controller,
 
 Automated acceptance uses fake role-specific inputs, fake echo cancellers and fake sinks to cover timing, discontinuity, shortage, failure and restart deterministically without touching Windows system state. The approved machine path uses the existing installed validation driver and elevated headless harness, then records through `MiniAEC Microphone` in Windows Recorder and at least one target meeting application. Driver install, test-mode, certificate and rollback actions remain separately reviewed and are not performed by ordinary tests or the AEC command.
 
+### Separate default-baseline functional acceptance from later algorithm optimization
+
+M3 accepts the frozen upstream-default M131 path when its transport, lifecycle, failure isolation, client consumption, rollback and acoustic scenario execution are complete and reviewable. The scenario matrix characterizes the default algorithm rather than authorizing tuning inside this change. A quality miss such as understandable but obviously swallowed near-end speech during double-talk must remain visible in active documentation and must not be described as meeting the desired quality target, but it does not reopen verified transport or lifecycle behavior. Any attempt to improve that result requires a separately approved future change, identical-input old/new processing and preservation of the demonstrated far-end removal.
+
+Treating every default-algorithm quality miss as permission to tune M3 was rejected because it would defeat the frozen-baseline boundary and make completion depend on an open-ended subjective search. Ignoring the miss or describing it as passing was also rejected because that would erase the evidence needed to scope later algorithm work.
+
 ## Risks / Trade-offs
 
 - [Independent microphone and render clocks can drift beyond the M3 pairing tolerance] → Record QPC delta, queue depth, silent references, stale discards and maximum skew; enter an explicit degraded or failed state at the bounded threshold and use the evidence to design M4 asynchronous resampling.
@@ -77,6 +83,7 @@ Automated acceptance uses fake role-specific inputs, fake echo cancellers and fa
 - [Shared-mode Windows conversion can obscure native device-clock behavior] → Retain native/requested format and continuous QPC/device-position diagnostics; do not claim drift closure until M4 evidence exists.
 - [The driver DACL prevents an ordinary user tray process from producing audio] → Keep M3 machine acceptance elevated and development-only, avoid changing the transport contract and defer the service/DACL/installer decision to M5.
 - [Acoustic acceptance depends on private room recordings and subjective listening] → Keep recordings ignored, use a fixed scenario matrix and metadata report, preserve the frozen algorithm and compare the product output consistently before proposing any tuning.
+- [The frozen default algorithm can meet functional goals while missing a subjective quality target] → Record the miss explicitly, complete only the verified M3 functional scope and require a separate identical-input change before optimizing the algorithm.
 - [Adding tray control before production permissions can look more complete than it is] → Label the path as development-only in status and documentation and do not describe M3 as distributable or ordinary-user ready.
 
 ## Migration Plan
@@ -86,7 +93,7 @@ Automated acceptance uses fake role-specific inputs, fake echo cancellers and fa
 3. Add the Windows render-loopback adapter and the frozen default M131 implementation behind the project boundaries, then pass format, workspace tests and strict Clippy without an installed driver.
 4. Add the headless real-time AEC command and thin tray state/control wiring without changing driver or Windows policy.
 5. Update README and active design/baseline documentation, then review the exact elevated validation and rollback plan separately.
-6. Run approved end-to-end acoustic and restart acceptance through `MiniAEC Microphone`, preserve only metadata summaries in reviewable locations and fully roll back development driver state when requested by the validation plan.
+6. Run approved end-to-end acoustic and restart acceptance through `MiniAEC Microphone`, preserve only metadata summaries in reviewable locations, document any default-baseline quality miss without tuning it in M3 and fully roll back development driver state when requested by the validation plan.
 
 Source rollback is an ordinary Git revert to the M2 bypass implementation. A failed AEC run never migrates persistent data and can be restarted explicitly in bypass only when the operator selects bypass. Machine rollback uses the existing driver lifecycle and may remove only the recorded validation device, package and certificate after explicit approval; this change itself does not authorize those actions.
 

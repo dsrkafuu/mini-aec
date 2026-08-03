@@ -1,6 +1,6 @@
 # MiniAEC 技术方案
 
-状态：M1 虚拟麦克风数据通路与 M2 实时 bypass 已通过开发期 elevated 路径验收；活动 OpenSpec change `implement-realtime-default-aec` 已实现 M3 的仓库内实时默认 AEC3 路径并通过合成自动化验证。单独批准的 elevated 真机测试已完成 Windows Recorder 与 Discord 消费，较大音量 far-end 抑制、near-end-only、render silence/recovery、sender contention 与 stop/start 表现符合预期，但 double-talk 出现明显近端吞字，不满足声学验收要求；用户手动重启后的最终只读清单已验证设备、端点、驱动包、证书、服务、默认角色和 TESTSIGNING 状态全部完成回滚。因此项目仍不是已验收的可用 AEC 产品
+状态：M1 虚拟麦克风数据通路、M2 实时 bypass 与 M3 实时默认 AEC3 已通过各自的开发期 elevated 功能验收。M3 的合成自动化与单独批准的真机测试覆盖 Windows Recorder、Discord、较大音量 far-end 抑制、near-end-only、double-talk、render silence/recovery、sender contention、stop/start 和完整 rollback。Double-talk 可懂但存在明显近端吞字，作为冻结默认算法的已知质量限制保留，当前不调参；普通用户权限、正式安装签名、长期漂移与算法质量优化仍属于后续里程碑，因此项目尚不是可分发的普通用户产品
 
 目标平台：Windows 11 x64
 
@@ -211,7 +211,7 @@ mini-aec/
 - 托盘显示 running/degraded/bypass；
 - 在真实外放、近端单讲和双讲中端到端验证。
 
-活动 OpenSpec change 为 `implement-realtime-default-aec`，capability 包含 `realtime-audio-engine` 与 `realtime-echo-cancellation` 的 delta specs。仓库内实现、headless `realtime-aec`、托盘控制和合成自动化验证已建立；单独审批的真机测试完成了 Windows Recorder 与 Discord 消费及全部声学场景评估，完整 rollback 也已由用户手动重启后的最终只读清单验证。Far-end-only（包括较大播放音量）、near-end-only 和 render silence/recovery 符合预期，但 double-talk 的明显近端吞字不满足验收合同，因此本阶段仍未 accepted。该阶段只建立默认算法的实时产品链路和可观察故障行为，不包含 AEC 调参、依赖升级、长期漂移补偿、普通用户驱动权限、安装或生产签名。
+活动 OpenSpec change 为 `implement-realtime-default-aec`，capability 包含 `realtime-audio-engine` 与 `realtime-echo-cancellation` 的 delta specs。仓库内实现、headless `realtime-aec`、托盘控制、合成自动化、Windows Recorder 与 Discord 消费、全部声学场景评估和完整 rollback 均已完成，因此本阶段的默认基线功能验收与质量表征已 accepted。Far-end-only（包括较大播放音量）、near-end-only 和 render silence/recovery 符合预期；double-talk 的明显近端吞字未达到期望质量目标，已作为默认算法限制记录，并延期到需要相同输入旧/新证据的独立 change。该阶段不包含 AEC 调参、依赖升级、长期漂移补偿、普通用户驱动权限、安装或生产签名。
 
 ### M4：漂移与稳定性
 
@@ -250,4 +250,4 @@ mini-aec/
 
 ## 10. SDD 状态
 
-仓库使用 OpenSpec 的 `spec-driven` schema 和 Codex 集成。M1 的 `virtual-microphone-transport` 与 `driver-development-lifecycle` capability 已 accepted，完成的 change 保存在 archive；`implement-realtime-microphone-bypass` 的 29 项任务与单独审批的 acceptance 已完成，`realtime-audio-engine` capability 已同步到主 specs，change 已归档。当前活动 change 为 `implement-realtime-default-aec`；仓库内实现、自动化验证和文档任务与需要单独批准的第 9 组 Windows/声学验收明确分开，后者未完成时不得归档或宣称 M3 accepted。
+仓库使用 OpenSpec 的 `spec-driven` schema 和 Codex 集成。M1 的 `virtual-microphone-transport` 与 `driver-development-lifecycle` capability 已 accepted，完成的 change 保存在 archive；`implement-realtime-microphone-bypass` 的 29 项任务与单独审批的 acceptance 已完成，`realtime-audio-engine` capability 已同步到主 specs，change 已归档。当前活动 change `implement-realtime-default-aec` 的仓库实现、自动化验证、文档和单独批准的第 9 组 Windows/声学验收共 52 项任务均已完成，可在 review 后同步 specs 并归档。

@@ -11,12 +11,12 @@ M1 proved the project-owned `MiniAEC Microphone` transport and M2 proved a bound
 - Add a replaceable project-owned `EchoCanceller` boundary whose initial adapter runs the frozen `webrtc-audio-processing 2.1.0` / WebRTC M131 full echo canceller with upstream-default AEC3 parameters and no NS, AGC or product post-processing.
 - Define render-reference shortage, timestamp discontinuity, AEC reset, non-finite output, source invalidation and terminal failure behavior without silently leaking raw microphone audio.
 - Extend metadata-only snapshots and validation evidence with render, alignment, AEC timing, reset, underrun and degraded-state diagnostics while keeping PCM and meeting content out of logs.
-- Validate far-end-only, near-end-only, double-talk, render-silence and restart scenarios end to end through `MiniAEC Microphone`, including consumption by Windows Recorder and at least one target meeting application.
+- Validate the frozen default baseline end to end through `MiniAEC Microphone` with far-end-only, near-end-only, double-talk, render-silence and restart scenarios plus Windows Recorder and at least one target meeting application, recording any quality shortfall without expanding M3 into algorithm optimization.
 - Connect the completed engine states to the existing windowless tray control surface without moving PCM or WebRTC work into Tauri.
 
 ### Non-goals
 
-- Do not tune AEC3, reintroduce product-facing suppression profiles, expose experimental wrapper configuration or upgrade the frozen WebRTC/FreeDesktop/Rust dependency chain.
+- Do not tune AEC3, reintroduce product-facing suppression profiles, expose experimental wrapper configuration or upgrade the frozen WebRTC/FreeDesktop/Rust dependency chain. A documented default-baseline quality shortfall is deferred to a separately approved future change with identical-input old/new evidence.
 - Do not add asynchronous resampling or claim long-run clock-drift closure; M3 records bounded drift evidence and leaves sustained correction and long-run gates to M4.
 - Do not add noise suppression, gain control, equalization, dereverberation, voice enhancement or a WebView/settings frontend.
 - Do not change the virtual microphone IOCTL protocol, public endpoint name, driver ring behavior, SysVAD baseline, control DACL, test-signing lifecycle, installer or production-signing strategy.
@@ -26,7 +26,7 @@ M1 proved the project-owned `MiniAEC Microphone` transport and M2 proved a bound
 
 ### New Capabilities
 
-- `realtime-echo-cancellation`: Defines explicit render-loopback capture, bounded microphone/render synchronization, the project-owned echo-canceller contract, frozen default M131 AEC3 processing, safe degraded behavior, AEC diagnostics and end-to-end acoustic acceptance through `MiniAEC Microphone`.
+- `realtime-echo-cancellation`: Defines explicit render-loopback capture, bounded microphone/render synchronization, the project-owned echo-canceller contract, frozen default M131 AEC3 processing, safe degraded behavior, AEC diagnostics and end-to-end functional acceptance plus acoustic quality characterization through `MiniAEC Microphone`.
 
 ### Modified Capabilities
 
@@ -38,4 +38,4 @@ M1 proved the project-owned `MiniAEC Microphone` transport and M2 proved a bound
 - Adds a project-owned real-time adapter around the already pinned `webrtc-audio-processing 2.1.0` dependency; no dependency version, vendored algorithm source or local vendor patch is expected to change.
 - Reuses `mini-aec-transport`, `mini-aec-windows-transport` and the validated driver protocol without changing their public requirements or WDK implementation.
 - Automated verification remains synthetic and non-mutating. Approved machine validation requires the existing development driver lifecycle and elevated producer path, stores private recordings only under ignored local paths, and must fully roll back separately authorized driver state.
-- Updates README, architecture, AEC-baseline and validation documentation to distinguish completed real-time AEC behavior from deferred M4 drift correction and M5 distribution work.
+- Updates README, architecture, AEC-baseline and validation documentation to distinguish completed real-time default-AEC behavior and recorded quality limitations from later algorithm optimization, M4 drift correction and M5 distribution work.

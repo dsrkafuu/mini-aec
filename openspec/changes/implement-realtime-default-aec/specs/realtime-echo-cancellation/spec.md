@@ -98,8 +98,8 @@ The system SHALL expose bounded metadata-only diagnostics sufficient to explain 
 - **WHEN** the windowless tray host refreshes its low-frequency status
 - **THEN** it receives only project-owned state and metadata and can distinguish stopped, starting, running AEC, degraded AEC, explicit bypass and failed without accessing PCM or WebRTC types
 
-### Requirement: End-to-end default AEC acceptance
-The project SHALL validate the frozen default M131 AEC3 path through `MiniAEC Microphone` with ordinary capture clients and an acoustic scenario matrix, while automated tests SHALL NOT install a driver or mutate boot, certificate, device or default-role state.
+### Requirement: End-to-end default AEC functional acceptance and quality characterization
+The project SHALL validate the frozen default M131 AEC3 path through `MiniAEC Microphone` with ordinary capture clients and an acoustic scenario matrix, SHALL record any default-baseline quality shortfall without claiming that the affected quality target passed, and automated tests SHALL NOT install a driver or mutate boot, certificate, device or default-role state. Algorithm optimization for a recorded shortfall requires a separately approved future change and identical-input old/new evidence.
 
 #### Scenario: Far-end-only playback is validated
 - **WHEN** selected-speaker playback is captured as the render reference and returns acoustically through the selected physical microphone
@@ -111,7 +111,8 @@ The project SHALL validate the frozen default M131 AEC3 path through `MiniAEC Mi
 
 #### Scenario: Double-talk is validated
 - **WHEN** near-end speech overlaps active selected-speaker playback before and after AEC convergence
-- **THEN** the near-end remains understandable without obvious swallowing or pumping while far-end removal remains effective
+- **THEN** the assessment records whether the desired target of understandable near-end speech without obvious swallowing or pumping is met while far-end removal remains effective
+- **THEN** any miss against that target is documented as a known default-algorithm quality limitation for later work without invalidating separately verified transport, lifecycle, safety or client-consumption behavior
 
 #### Scenario: Render silence and restart are validated
 - **WHEN** playback becomes silent or either selected input is explicitly restarted according to the approved validation sequence
