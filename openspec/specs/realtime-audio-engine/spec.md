@@ -2,40 +2,48 @@
 
 ## Purpose
 
-Define the independent, bounded and observable real-time engine that captures one explicit physical microphone and supplies fresh normalized PCM to `MiniAEC Microphone` through an isolated bypass lifecycle.
+Define the independent, bounded and observable real-time engine that captures explicit physical input roles and supplies fresh normalized or echo-cancelled PCM to `MiniAEC Microphone` through isolated bypass and AEC-enabled lifecycles.
 
 ## Requirements
 
 ### Requirement: Independent real-time engine lifecycle
-The system SHALL provide a Tauri-independent real-time engine that accepts project-owned configuration and lifecycle commands, reports a project-owned state and can start, stop and explicitly restart one physical-microphone bypass run without depending on a CLI, WebView or async UI runtime.
+The system SHALL provide a Tauri-independent real-time engine that accepts project-owned configuration and lifecycle commands, reports project-owned state and can start, stop and explicitly restart either one physical-microphone bypass run or one dual-input AEC-enabled run without depending on a CLI, WebView or async UI runtime.
 
-#### Scenario: Engine starts successfully
-- **WHEN** a stopped engine receives a valid configuration with an available physical microphone and virtual microphone sink
-- **THEN** it transitions through Starting to RunningBypass
-- **THEN** it reports the configured source identity and a new run and sink-session identity
+#### Scenario: AEC-enabled engine starts successfully
+- **WHEN** a stopped engine receives a valid AEC configuration with available explicit physical microphone, physical render-loopback and virtual microphone sink endpoints
+- **THEN** it transitions through Starting to RunningAec
+- **THEN** it reports both configured source identities and a new run, synchronization epoch, AEC instance and sink-session identity
+
+#### Scenario: Bypass engine starts successfully
+- **WHEN** a stopped engine receives a valid explicit bypass configuration with an available physical microphone and virtual microphone sink
+- **THEN** it transitions through Starting to RunningBypass without opening render loopback or constructing an echo canceller
 
 #### Scenario: Engine stops normally
-- **WHEN** a running engine receives a stop command
-- **THEN** it stops accepting source audio, closes the source and sink session, clears partial and queued PCM and transitions to Stopped
+- **WHEN** a running or degraded engine receives a stop command
+- **THEN** it stops accepting both source roles, closes source, AEC and sink resources, clears partial, queued and processed PCM and transitions to Stopped
 
 #### Scenario: Engine restarts explicitly
 - **WHEN** a stopped or failed engine receives a new start command after its prior run has been closed
-- **THEN** it creates a distinct run and sink session, restarts sink sequencing at zero and exposes no partial or queued PCM from the prior run
+- **THEN** it creates distinct run, synchronization, AEC when applicable and sink-session identities, restarts sink sequencing at zero and exposes no partial or queued PCM from the prior run
 
 ### Requirement: Explicit physical source isolation
-The engine SHALL require an explicit Windows capture endpoint ID, SHALL resolve and report its display metadata before capture, and SHALL reject `MiniAEC Microphone` as its own physical source without silently falling back to the Windows default or another endpoint.
+The engine SHALL require exact Windows endpoint IDs for every configured physical input role, SHALL resolve and report display metadata before capture, SHALL reject `MiniAEC Microphone` as its own physical microphone source and SHALL NOT silently fall back to Windows defaults or other endpoints.
 
-#### Scenario: Explicit physical microphone is selected
-- **WHEN** the configured endpoint ID resolves to an active non-MiniAEC capture endpoint
-- **THEN** the engine opens exactly that endpoint and reports its ID and friendly name
+#### Scenario: Explicit physical microphone and render are selected
+- **WHEN** an AEC configuration resolves to one active non-MiniAEC capture endpoint and one active physical render endpoint
+- **THEN** the engine opens exactly those endpoints in their configured capture and render-loopback roles and reports both IDs and friendly names
+
+#### Scenario: Explicit bypass source is selected
+- **WHEN** a bypass configuration resolves to an active non-MiniAEC capture endpoint
+- **THEN** the engine opens exactly that capture endpoint without requiring or opening a render endpoint
 
 #### Scenario: MiniAEC is selected recursively
-- **WHEN** the configured endpoint resolves to the public `MiniAEC Microphone` capture endpoint
-- **THEN** start fails with an actionable invalid-source error before opening a virtual microphone sink session
+- **WHEN** the configured physical microphone resolves to the public `MiniAEC Microphone` capture endpoint
+- **THEN** start fails with an actionable invalid-source error before opening render, AEC or virtual microphone sink resources
 
 #### Scenario: Configured source is unavailable
-- **WHEN** the configured endpoint ID is missing or inactive
-- **THEN** start fails without opening another microphone or changing Windows default-device policy
+- **WHEN** any endpoint required by the selected mode is missing, inactive or has the wrong data-flow role
+- **THEN** start fails without opening another endpoint or changing Windows default-device policy
 
 ### Requirement: Fixed-format normalization and framing
 The engine SHALL transform event-driven physical microphone packets into finite 48 kHz mono samples, assemble exact 10 ms frames of 480 samples across arbitrary packet boundaries, convert them deterministically to PCM16 and submit only complete frames to the virtual microphone path.
@@ -99,15 +107,19 @@ The engine SHALL treat physical-device invalidation, unrecoverable WASAPI failur
 - **THEN** capture resumes in a new run and sink session without exposing PCM from before the failure
 
 ### Requirement: Metadata-only engine diagnostics
-The engine SHALL expose bounded snapshots and validation events containing lifecycle, source, framing, queue and sink counters needed to explain continuity and recovery, and SHALL NOT include PCM or meeting content in logs.
+The engine SHALL expose bounded snapshots and validation events containing lifecycle, mode, both source roles when applicable, framing, synchronization, AEC, queue and sink counters needed to explain continuity and recovery, and SHALL NOT include PCM or meeting content in logs.
 
-#### Scenario: Snapshot is requested
-- **WHEN** a controller requests the current engine snapshot
-- **THEN** it reports state, source identity, run and session identity, capture and silence counts, discontinuities, timestamp errors, normalized frames, queue depth and high-water mark, local overflows and discards, accepted sink frames, sink failures and the last project-owned error
+#### Scenario: Bypass snapshot is requested
+- **WHEN** a controller requests a snapshot for a bypass run
+- **THEN** it reports bypass state, microphone identity, run and session identity, capture and silence counts, discontinuities, timestamp errors, normalized frames, queue depth and high-water mark, local overflows and discards, accepted sink frames, sink failures and the last project-owned error without claiming render or AEC activity
+
+#### Scenario: AEC snapshot is requested
+- **WHEN** a controller requests a snapshot for an AEC-enabled run
+- **THEN** it includes the bypass-era fields plus render identity and counters, synchronization and skew evidence, AEC processing and recovery evidence, current degradation reason and AEC-specific state
 
 #### Scenario: Diagnostics are persisted
 - **WHEN** the headless validation command writes periodic events or a final result
-- **THEN** it writes metadata only to an ignored evidence path and does not write PCM from a real-time thread
+- **THEN** it writes metadata only to an ignored evidence path outside real-time workers and does not write PCM or meeting content
 
 ### Requirement: End-to-end bypass acceptance
 The project SHALL provide a headless validation path that runs the engine with an explicit physical microphone and verifies the resulting stream through `MiniAEC Microphone` without installing a driver or changing test mode unless those lifecycle actions were separately reviewed and approved.
