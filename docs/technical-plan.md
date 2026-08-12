@@ -87,7 +87,7 @@ M2 的实时 bypass 合同固定为：
 - 生命周期为 `Stopped → Starting → RunningBypass → Stopping → Stopped`，source invalidation、不可恢复 capture 错误、driver absence、access denial、sender contention、version mismatch 或 rejected write 会终止当前 run、清空 PCM 并进入 `Failed`，只能显式 restart；
 - snapshot 只包含 endpoint、run/session identity、packet/frame、silence、discontinuity、timestamp、queue、sink 和 error 元数据，不包含 PCM 或会议内容。
 
-当前验证驱动的控制 DACL 只允许 SYSTEM 和 Administrators，因此 headless bypass 的真机端到端验证是开发期 elevated 路径。普通用户托盘如何访问正式签名驱动仍属于后续安装/权限架构，M2 不对其作推断。显式 bypass 是独立里程碑，不是 AEC 故障时静默泄漏原始麦克风的回退策略。
+M2 验收所用的历史开发包只允许 SYSTEM 和 Administrators，因此当时的 headless bypass 真机测试是 elevated 路径。后续 change `enable-normal-user-virtual-microphone-access` 已加入受保护的 Interactive Users 最小读写 DACL、明确 busy 仲裁和非提升验证工具，并通过批准后的新包安装、普通用户端到端消费、owner 退出/重连与完整 rollback。显式 bypass 是独立模式，不是 AEC 故障时静默泄漏原始麦克风的回退策略。
 
 M3 实时 AEC 合同固定为：
 
@@ -112,7 +112,7 @@ M3 实时 AEC 合同固定为：
 
 驱动基于固定版本的 Microsoft SysVAD，使用 WDK 所需的 C/C++。公共 capture endpoint 名称固定为 `MiniAEC Microphone`。
 
-当前验证实现已选择受限控制设备加驱动自有有界环形缓冲。用户态通过仅允许 SYSTEM 和 Administrators 访问的非音频控制接口提交固定 10 ms PCM 帧，驱动只公开 `MiniAEC Microphone` capture endpoint；私有 WaveRT render sink 因无法可靠满足普通应用不可枚举的约束而在设计阶段排除。
+当前验证实现使用受限控制设备加驱动自有有界环形缓冲。源码中的受保护 DACL 为 SYSTEM/Administrators 保留 full control，只向 Interactive Users 授予协议需要的 generic read/write，不向 Everyone、Authenticated Users、Builtin Users、anonymous、guest 或 network logon 授权；驱动只公开 `MiniAEC Microphone` capture endpoint。一个自旋锁保护的 owner handle 独占 sender slot，第二个授权进程得到明确 busy，close/process exit/driver shutdown 清 session 与 PCM。任何本地交互进程仍可竞争该机器级 slot，per-executable trust、multi-session arbitration 与 service broker 留待 M5 安装/威胁模型决策。
 
 控制协议固定为 48 kHz、单声道、PCM16、每帧 480 samples/960 bytes。驱动的 10 帧非分页环形缓冲不映射到用户态：欠载输出零值静音，溢出丢弃最旧未消费完整帧并保留最新帧，新会话原子清空旧 PCM。协议版本、会话 ID、单调序列、当前深度、高水位、拒绝写入、欠载、溢出和丢弃帧均可诊断。
 
@@ -202,7 +202,7 @@ mini-aec/
 - 实现设备选择、状态、显式旁路和故障恢复；
 - 连续运行无爆音、旧帧重复或无界延迟。
 
-仓库内 engine、Windows capture adapter、headless harness 和合成验证已建立；开发期 elevated 真机验收已覆盖五分钟连续录音、stop/start 隔离、sender contention、设备 restart 和完整 rollback。普通用户驱动访问、正式安装与签名仍是后续工作，普通测试不得自行改变系统。
+仓库内 engine、Windows capture adapter、headless harness 和合成验证已建立；开发期 elevated 真机验收已覆盖五分钟连续录音、stop/start 隔离、sender contention、设备 restart 和完整 rollback。活动普通用户 access change 不改变 M2 音频合同，且普通运行验证不得自行改变系统；正式安装与签名仍是后续工作。
 
 ### M3：实时默认 AEC3
 
@@ -211,7 +211,7 @@ mini-aec/
 - 托盘显示 running/degraded/bypass；
 - 在真实外放、近端单讲和双讲中端到端验证。
 
-活动 OpenSpec change 为 `implement-realtime-default-aec`，capability 包含 `realtime-audio-engine` 与 `realtime-echo-cancellation` 的 delta specs。仓库内实现、headless `realtime-aec`、托盘控制、合成自动化、Windows Recorder 与 Discord 消费、全部声学场景评估和完整 rollback 均已完成，因此本阶段的默认基线功能验收与质量表征已 accepted。Far-end-only（包括较大播放音量）、near-end-only 和 render silence/recovery 符合预期；double-talk 的明显近端吞字未达到期望质量目标，已作为默认算法限制记录，并延期到需要相同输入旧/新证据的独立 change。该阶段不包含 AEC 调参、依赖升级、长期漂移补偿、普通用户驱动权限、安装或生产签名。
+归档 OpenSpec change `implement-realtime-default-aec` 的仓库实现、headless `realtime-aec`、托盘控制、合成自动化、Windows Recorder 与 Discord 消费、全部声学场景评估和完整 rollback 均已完成，因此本阶段的默认基线功能验收与质量表征已 accepted。Far-end-only（包括较大播放音量）、near-end-only 和 render silence/recovery 符合预期；double-talk 的明显近端吞字未达到期望质量目标，已作为默认算法限制记录，并延期到需要相同输入旧/新证据的独立 change。该阶段不包含 AEC 调参、依赖升级、长期漂移补偿、普通用户驱动权限、安装或生产签名。
 
 ### M4：漂移与稳定性
 
@@ -221,6 +221,7 @@ mini-aec/
 
 ### M5：安装与签名
 
+- `enable-normal-user-virtual-microphone-access` 的最小 Interactive Users runtime 权限、非提升端到端消费和完整 rollback 已完成批准的真机 acceptance；
 - 协调应用与驱动安装、升级、回滚和卸载；
 - 区分开发测试签名与正式发布签名；
 - 完成主流会议软件兼容性矩阵。
@@ -250,4 +251,4 @@ mini-aec/
 
 ## 10. SDD 状态
 
-仓库使用 OpenSpec 的 `spec-driven` schema 和 Codex 集成。M1 的 `virtual-microphone-transport` 与 `driver-development-lifecycle` capability 已 accepted，完成的 change 保存在 archive；`implement-realtime-microphone-bypass` 的 29 项任务与单独审批的 acceptance 已完成，`realtime-audio-engine` capability 已同步到主 specs，change 已归档。当前活动 change `implement-realtime-default-aec` 的仓库实现、自动化验证、文档和单独批准的第 9 组 Windows/声学验收共 52 项任务均已完成，可在 review 后同步 specs 并归档。
+仓库使用 OpenSpec 的 `spec-driven` schema 和 Codex 集成。M1、M2 与 M3 change 均已完成、同步 capability 并归档。`enable-normal-user-virtual-microphone-access` 修改 `virtual-microphone-transport` 与 `driver-development-lifecycle`，其仓库内 ACL、busy 语义、非提升验证工具、批准的真机 acceptance 和完整 rollback 已完成；任何后续 test-sign、install、device activation、uninstall 或 rollback 仍须另行批准，操作系统 restart 永远只由用户手动执行。

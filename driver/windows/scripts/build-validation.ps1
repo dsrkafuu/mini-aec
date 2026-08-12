@@ -6,7 +6,10 @@ $scriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 $driverRoot = Split-Path -Parent $scriptRoot
 $sysvadRoot = Join-Path $driverRoot 'vendor\sysvad'
 $preflightScript = Join-Path $scriptRoot 'preflight.ps1'
+$accessPolicyScript = Join-Path $scriptRoot 'verify-runtime-access-policy.ps1'
 $packageRoot = Join-Path $driverRoot 'out\validation-x64-debug'
+
+& $accessPolicyScript
 
 $preflightJson = & $preflightScript -Json
 if ($LASTEXITCODE -ne 0) {

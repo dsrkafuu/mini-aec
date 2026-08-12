@@ -10,9 +10,9 @@ MiniAEC intentionally stops at AEC. Noise suppression, automatic gain control, e
 - `mini-aec-lab` can enumerate Windows endpoints, capture a physical microphone and WASAPI render loopback together, align them by QPC timestamps, and run the frozen default WebRTC AEC3 baseline offline.
 - The M1 virtual-microphone transport is validated end to end: the pinned SysVAD-derived development driver exposes one selectable `MiniAEC Microphone`, accepts fixed 10 ms PCM16 frames through the private adapter, isolates sender sessions, survives the validated restart cases, and rolls back cleanly.
 - M2 real-time bypass is validated on the elevated development path. The Tauri-independent `mini-aec-engine` captures one explicit physical microphone through event-driven WASAPI, normalizes and frames it, and sends it to `MiniAEC Microphone` through a bounded four-frame queue. The accepted run covered five-minute continuity, stop/start isolation, sender contention, device restart, and complete rollback.
-- The active M3 change implements and functionally validates a real-time default-AEC path with exact physical microphone and render-loopback IDs, bounded QPC alignment, a project-owned `EchoCanceller` boundary around the frozen default M131 adapter, AEC-specific lifecycle states, metadata-only diagnostics, a headless command, and tray control. Automated synthetic tests pass. A separately approved elevated run validated Windows Recorder and Discord consumption, effective far-end removal including louder playback, natural near-end-only speech, render-silence recovery, sender contention, stop/start isolation and complete rollback. Double-talk remained understandable but had obvious near-end swallowing; this is a recorded default-algorithm quality limitation, not a claim that the desired double-talk target passed. M3 keeps upstream-default parameters and defers algorithm optimization to a separately approved future change with identical-input evidence.
-- Drift compensation remains M4 work and must be driven by measured long-run clock error. Normal-user driver access, installation, production signing, upgrade and uninstall remain M5 work.
-- OpenSpec uses the `spec-driven` schema. The accepted M1 and M2 changes are archived and their capabilities are synced to the main specs. The active change `implement-realtime-default-aec` has completed all 52 tasks and is ready for review and archive.
+- The completed M3 change implements and functionally validates a real-time default-AEC path with exact physical microphone and render-loopback IDs, bounded QPC alignment, a project-owned `EchoCanceller` boundary around the frozen default M131 adapter, AEC-specific lifecycle states, metadata-only diagnostics, a headless command, and tray control. Automated synthetic tests pass. A separately approved elevated run validated Windows Recorder and Discord consumption, effective far-end removal including louder playback, natural near-end-only speech, render-silence recovery, sender contention, stop/start isolation and complete rollback. Double-talk remained understandable but had obvious near-end swallowing; this is a recorded default-algorithm quality limitation, not a claim that the desired double-talk target passed. M3 keeps upstream-default parameters and defers algorithm optimization to a separately approved future change with identical-input evidence.
+- Drift compensation remains M4 work and must be driven by measured long-run clock error. The normal-user access change implements a least-privilege Interactive Users source policy and runtime validation harness; its separately approved rebuilt development package passed non-elevated transport, bypass, default-AEC, Windows Recorder, Discord, contention, process-restart and complete rollback acceptance. Production installation, signing, upgrade and uninstall remain M5 work.
+- OpenSpec uses the `spec-driven` schema. The accepted M1, M2 and M3 changes are archived and their capabilities are synced to the main specs. The active change is `enable-normal-user-virtual-microphone-access`.
 
 See [docs/technical-plan.md](docs/technical-plan.md) for the architecture and delivery gates, [docs/aec-baseline.md](docs/aec-baseline.md) for the frozen algorithm baseline, [docs/realtime-aec-validation.md](docs/realtime-aec-validation.md) for the M3 validation procedure, and [driver/windows/README.md](driver/windows/README.md) for the development driver boundary. AEC provenance and upgrade rules live in [vendor/UPSTREAM.md](vendor/UPSTREAM.md) and [docs/upstream-upgrade-plan.md](docs/upstream-upgrade-plan.md).
 
@@ -82,26 +82,26 @@ First list endpoints and copy the exact physical microphone and render IDs; real
 .tools\cargo-webrtc.cmd run -p mini-aec-lab -- devices --json
 ```
 
-With an already installed and separately approved development validation driver, run default AEC from an Administrator PowerShell:
+With the rebuilt development package separately approved, installed and activated, run the normal-user gate from an ordinary non-elevated interactive PowerShell. This wrapper verifies token elevation and the installed transport DACL before invoking the same real-time engine:
 
 ```powershell
-.tools\cargo-webrtc.cmd run -p mini-aec-lab -- realtime-aec `
-  --microphone-id "<exact-physical-capture-endpoint-id>" `
-  --render-id "<exact-physical-render-endpoint-id>" `
-  --duration 300
+driver\windows\scripts\runtime-access-validation.ps1 -Action Aec `
+  -MicrophoneId "<exact-physical-capture-endpoint-id>" `
+  -RenderId "<exact-physical-render-endpoint-id>" `
+  -DurationSeconds 300
 ```
 
-The command records one metadata-only `engine.jsonl` below ignored `driver/windows/out/validation/engine-aec/`. It contains endpoint identity and format metadata, QPC alignment, queue, AEC, processing-time, sink, state, degradation, and failure summaries; it contains no PCM. The command accepts no AEC tuning parameters and exits nonzero on terminal engine failure.
+The wrapper records one metadata-only `engine.jsonl` below ignored `artifacts/normal-user-access/<run>/engine-aec/`. It contains endpoint identity and format metadata, QPC alignment, queue, AEC, processing-time, sink, state, degradation, and failure summaries; it contains no PCM. The command accepts no AEC tuning parameters and exits nonzero on terminal engine failure.
 
 Explicit M2 bypass remains available:
 
 ```powershell
-.tools\cargo-webrtc.cmd run -p mini-aec-lab -- bypass `
-  --microphone-id "<exact-physical-capture-endpoint-id>" `
-  --duration 300
+driver\windows\scripts\runtime-access-validation.ps1 -Action Bypass `
+  -MicrophoneId "<exact-physical-capture-endpoint-id>" `
+  -DurationSeconds 300
 ```
 
-Neither command changes BCD, certificates, drivers, devices, or Windows default audio roles. Both reject `MiniAEC Microphone` as their own capture source. The current driver control DACL makes this an elevated development-only validation path; it is not the later normal-user tray or production installation design.
+Neither command changes BCD, certificates, drivers, devices, or Windows default audio roles. Both reject `MiniAEC Microphone` as their own capture source. The runtime wrapper refuses elevation and stores token, DACL and engine metadata only under ignored paths. The source policy grants Interactive Users read/write rather than generic-all, and the approved development-package run passed Windows Recorder, Discord, contention, owner-exit/reconnect and rollback validation from a non-elevated interactive process. This remains development acceptance, not a production installation, signing or per-executable authorization design.
 
 Bypass is an explicit mode, not a fallback for an AEC failure. Invalid AEC output is silenced while bounded reconstruction is attempted; exhausted recovery, sustained synchronization failure, input invalidation, or sink failure closes the run. Private Windows Recorder files remain outside version control under ignored local paths. The offline `aec` command is a diagnostic baseline and is not product-path acceptance.
 

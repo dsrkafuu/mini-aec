@@ -1,6 +1,6 @@
 # MiniAEC Microphone transport validation
 
-This protocol validates the selected private control-interface and driver-owned-ring transport. It defines evidence collection but does not authorize test mode, certificate, driver installation, device restart, or uninstall actions. Every such action requires explicit user approval after reviewing the commands and rollback plan below.
+This protocol validates the selected private control-interface and driver-owned-ring transport, including the completed development acceptance for normal-user access. It defines evidence collection but does not authorize test mode, certificate, driver installation, device restart, or uninstall actions. Every such action requires explicit user approval after reviewing the commands and rollback plan below. Ordinary runtime validation after an approved package is active is separate, non-elevated and incapable of performing those lifecycle mutations.
 
 ## Build and lifecycle preview
 
@@ -8,7 +8,8 @@ Create the ignored unsigned x64 Debug package and Release sender without changin
 
 ```powershell
 driver\windows\scripts\build-validation.ps1
-.tools\cargo-webrtc.cmd build -p mini-aec-sender --release
+driver\windows\scripts\verify-runtime-access-policy.ps1
+.tools\cargo-webrtc.cmd build -p mini-aec-sender -p mini-aec-lab --release
 ```
 
 Preview all planned system mutations and save the pre-change inventory:
@@ -20,6 +21,28 @@ driver\windows\scripts\validation-lifecycle.ps1 -Action Inventory
 ```
 
 The generated package, certificate, inventory, sender logs, and recordings stay below ignored `driver/windows/out/`, `target/`, or private `artifacts/` paths.
+
+## Non-elevated runtime validation
+
+Preview the runtime-only operations without requiring an installed driver or writing evidence:
+
+```powershell
+driver\windows\scripts\runtime-access-validation.ps1 -Action Plan
+```
+
+After the approved development package is installed and active, leave the lifecycle PowerShell elevated only for lifecycle work and open a separate ordinary interactive PowerShell for runtime acceptance. The following commands refuse an elevated or non-interactive token, write metadata below ignored `artifacts/normal-user-access/`, verify the installed protected DACL, and contain no driver, certificate, boot, device-restart or default-role mutation:
+
+```powershell
+driver\windows\scripts\runtime-access-validation.ps1 -Action Identity
+driver\windows\scripts\runtime-access-validation.ps1 -Action Transport
+driver\windows\scripts\runtime-access-validation.ps1 -Action Contention
+driver\windows\scripts\runtime-access-validation.ps1 -Action Bypass -MicrophoneId "<exact-physical-capture-endpoint-id>" -DurationSeconds 300
+driver\windows\scripts\runtime-access-validation.ps1 -Action Aec -MicrophoneId "<exact-physical-capture-endpoint-id>" -RenderId "<exact-physical-render-endpoint-id>" -DurationSeconds 300
+```
+
+`Identity` records the exact token and session context without opening the driver. `Transport` verifies Interactive Users read/write access by opening a session, writing one deterministic frame, reading diagnostics and closing. `Contention` verifies explicit busy, uninterrupted first-owner behavior and reconnection after owner exit. Bypass and AEC retain exact physical endpoint selection and metadata-only engine evidence. Run Windows Recorder and Discord or the chosen meeting client separately during the applicable engine intervals and retain private recordings only under ignored `artifacts/`.
+
+The intended installed DACL is protected and contains SYSTEM/Administrators generic-all plus Interactive Users generic-read/generic-write, with no producer grant for Everyone, Authenticated Users, Builtin Users, anonymous, guests or network logons. Direct access means any local interactive process can contend for the one machine-wide sender slot; this change does not claim per-executable authorization or multi-session arbitration.
 
 ## Approved lifecycle commands and rollback
 
@@ -51,6 +74,16 @@ driver\windows\scripts\validation-lifecycle.ps1 -Action Uninstall -PublishedInf 
 ```
 
 If `-RestoreTestSigningOff` is used, reboot Windows manually and save another inventory. A targeted DevCon restart or uninstall can also report that a full reboot is required; the script does not reboot Windows and the pending state must be inventoried and approved before rebooting. Compare the endpoint/default-role list, PnP list, boot configuration, certificate stores, driver packages, service/device absence, and unrelated physical devices with the pre-install JSON. If signing preparation fails before installation, remove only the exact recorded certificate thumbprint and restore the saved test-signing state manually. Secure Boot can prevent BCDEdit test-signing changes; do not disable Secure Boot automatically or from this script.
+
+### 2026-08-11–12 normal-user acceptance record
+
+The approved Windows 11 x64 development run installed the rebuilt package as `oem38.inf` and verified the installed protected DACL as `D:P(A;;FA;;;SY)(A;;FA;;;BA)(A;;0x12019f;;;IU)`. Runtime validation was performed by the non-elevated interactive identity `DSR983D\DSR983D`, SID `S-1-5-21-4204883295-4094219052-511789278-1001`, CloudAP authentication, session 1, with the Interactive SID present and token elevation false.
+
+The normal-user transport probe, explicit busy contention, owner-exit cleanup and fresh reconnection passed. A 300-second bypass run accepted 30,000 frames without sink failure, queue overflow or discard, and Windows Recorder captured fresh K7 audio. After correcting the existing render-silence pacing implementation to stop repeating a timed wait for every capture frame, a 240-second frozen-default AEC run captured and accepted all 24,002 frames with queue high-water 1 and zero user-space overflow, discard, sink failure, invalid AEC output or processing deadline miss. Windows Recorder and Discord consumed the processed endpoint concurrently, Recorder also recorded alone, and the user reported normal client behavior. Echo removal remained effective in far-end-only, near-end-only, double-talk and louder-playback checks; the previously recorded double-talk near-end swallowing remained an unchanged algorithm-quality limitation.
+
+The second authorized sender received explicit `Busy` with Windows error 170. After owner exit, diagnostics showed a closed session and zero depth; a fresh process used a distinct session ID, sequence zero and no rejected write, overflow or discard. Direct Interactive Users access still permits any local interactive process, including another interactive session, to contend for the one machine-wide slot; per-executable authorization, multi-session arbitration and a possible broker remain production security decisions.
+
+Rollback required two user-performed restart boundaries. The agent never initiated, scheduled or invoked a restart. Final read-only inventory `driver/windows/out/validation/inventory-20260812-120517.json` found no MiniAEC device, endpoint, `oem38.inf` package, matching certificate, service or service registry key. K7 owned Console, Multimedia and Communications default capture roles; Realtek speakers owned all three default render roles. Windows Code Integrity options were `0x00000001`, proving the TESTSIGNING bit was clear. The development package is fully rolled back; production signing, installer, upgrade, uninstall product design and broader compatibility remain unvalidated.
 
 ## Fixed input contract
 
@@ -134,6 +167,7 @@ Create one record per run with these fields:
 | --- | --- |
 | Source | Repository commit, OpenSpec change name, transport name, transport protocol version, diagnostics schema version |
 | Environment | Timestamp and timezone, Windows edition/build, Visual Studio, x64 MSBuild, MSVC, SDK, WDK, SignTool versions |
+| Runtime identity | User and token SID, process/session identity, interactive SID presence, token elevation result, installed control-device SDDL |
 | Package | Driver package path and hash, INF identity, service name, device instance ID, public endpoint ID, development-signing identity |
 | Isolation | Before/after endpoint inventories, default input/output identities, visible endpoint count, producer-only endpoint visibility result |
 | Sender | Command, process ID, session ID, first and last sequence, start/stop times, marker sequences, sender exit code, log path |

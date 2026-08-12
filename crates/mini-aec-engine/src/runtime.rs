@@ -1107,6 +1107,7 @@ fn aec_processing_worker(
 
   let mut microphone = Some(first_microphone);
   let mut render = first_render;
+  let mut render_wait_exhausted = first_render.is_none();
   let mut sequence = 0_u64;
   let mut consecutive_skew_misses = 0_u32;
   let mut consecutive_aec_failures = 0_u32;
@@ -1139,6 +1140,7 @@ fn aec_processing_worker(
     let (render_samples, paired, delta) = match select_render_frame(
       &microphone_frame,
       &mut render,
+      &mut render_wait_exhausted,
       render_queue,
       shared,
       echo_factory,
@@ -1299,16 +1301,27 @@ fn aec_processing_worker(
 fn select_render_frame(
   microphone: &TimedFrame,
   render: &mut Option<TimedFrame>,
+  render_wait_exhausted: &mut bool,
   render_queue: &TimedFrameQueue,
   shared: &Shared,
   echo_factory: &dyn EchoCancellerFactory,
   echo: &mut Box<dyn crate::EchoCanceller>,
 ) -> Result<([f32; mini_aec_transport::FRAME_SAMPLES], bool, Option<i64>), EngineError> {
   if render.is_none() {
-    *render = match render_queue.pop(RENDER_WAIT) {
-      TimedPopResult::Frame(frame) => Some(frame),
-      TimedPopResult::Timeout | TimedPopResult::Finished => None,
+    *render = if *render_wait_exhausted {
+      render_queue.try_pop()
+    } else {
+      match render_queue.pop(RENDER_WAIT) {
+        TimedPopResult::Frame(frame) => Some(frame),
+        TimedPopResult::Timeout | TimedPopResult::Finished => {
+          *render_wait_exhausted = true;
+          None
+        }
+      }
     };
+    if render.is_some() {
+      *render_wait_exhausted = false;
+    }
   }
   while let Some(candidate) = *render {
     if candidate.reset_epoch {
@@ -1338,6 +1351,7 @@ fn select_render_frame(
     }
     if delta <= ALIGNMENT_TOLERANCE_100NS.cast_signed() {
       *render = render_queue.try_pop();
+      *render_wait_exhausted = false;
       return Ok((candidate.samples, true, Some(delta)));
     }
     return Ok(([0.0; mini_aec_transport::FRAME_SAMPLES], false, Some(delta)));
@@ -2025,6 +2039,42 @@ mod tests {
     assert_eq!(snapshot.silent_render_references, 2);
     assert!(snapshot.last_error.is_none());
     engine.stop().expect("silent-start AEC cleanup succeeds");
+  }
+
+  #[test]
+  fn active_silent_render_does_not_stall_the_microphone_timeline() {
+    let source = FakeAudioInputFactory::new(descriptor()).with_render(render_descriptor());
+    let mut microphone_steps = Vec::new();
+    for index in 0..50 {
+      microphone_steps.push(packet_at(0.25, 1_000_000 + index * 100_000));
+      microphone_steps.push(SourceStep::Delay(Duration::from_millis(5)));
+    }
+    source.push_run(microphone_steps);
+    source.push_render_run([SourceStep::Delay(Duration::from_secs(2))]);
+    let sink = FakeSinkFactory::default();
+    let echo = FakeEchoCancellerFactory::default();
+    let engine = aec_engine(&source, &sink, &echo);
+
+    engine
+      .start(EngineConfig::aec("physical-id", "render-id"))
+      .expect("active silent render endpoint establishes an AEC run");
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while engine.snapshot().sink_accepted_frames < 50 && Instant::now() < deadline {
+      thread::sleep(Duration::from_millis(1));
+    }
+    let snapshot = engine.snapshot();
+    assert_eq!(
+      snapshot.sink_accepted_frames, 50,
+      "active-silent-render snapshot: {snapshot:#?}"
+    );
+    assert_eq!(snapshot.queue_overflows, 0);
+    assert_eq!(snapshot.discarded_frames, 0);
+    assert_eq!(snapshot.silent_render_references, 50);
+    assert_eq!(snapshot.state, EngineState::Degraded);
+    assert!(snapshot.last_error.is_none());
+    engine
+      .stop()
+      .expect("active-silent-render cleanup succeeds");
   }
 
   #[test]

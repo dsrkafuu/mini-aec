@@ -6,7 +6,7 @@ This directory contains the Windows 11 x64 validation driver for the single publ
 
 M1 validated deterministic user-mode signal transport, the single public capture endpoint, sender and session isolation, underrun silence, restart behavior, capture-client consumption and complete rollback. M2 reused the same transport for a five-minute physical-microphone bypass run and validated stop/start isolation, sender contention, device restart and stale-audio prevention on the elevated development path.
 
-The completed M3 change consumes this transport through the same project-owned sink boundary without changing its IOCTL layout, public endpoint name, fixed PCM contract or driver ring behavior. Repository-level synthetic tests and a separately approved elevated run exercised Windows Recorder and Discord consumption, acoustic scenarios, render silence/recovery, sender contention, stop/start isolation and complete rollback. Client consumption succeeded; double-talk remained understandable but had obvious near-end swallowing, which is recorded as a frozen default-algorithm quality limitation for later work rather than tuned in M3. Final read-only inventory after the user-performed restart verified complete rollback of the validation device, endpoint, package, certificates, service, default roles and TESTSIGNING state. The current Administrator/SYSTEM-only DACL remains a known development limitation; normal-user access, production signing and installer architecture are not solved by the M1/M2 results or the M3 code.
+The completed M3 change consumes this transport through the same project-owned sink boundary without changing its IOCTL layout, public endpoint name, fixed PCM contract or driver ring behavior. Repository-level synthetic tests and a separately approved elevated run exercised Windows Recorder and Discord consumption, acoustic scenarios, render silence/recovery, sender contention, stop/start isolation and complete rollback. Client consumption succeeded; double-talk remained understandable but had obvious near-end swallowing, which is recorded as a frozen default-algorithm quality limitation for later work rather than tuned in M3. The later `enable-normal-user-virtual-microphone-access` development package passed separately approved non-elevated transport, bypass, default-AEC, Windows Recorder, Discord, contention, owner-exit/reconnect and complete rollback acceptance with the Interactive Users read/write policy. Production signing and installer architecture remain unsolved.
 
 ## Selected transport
 
@@ -14,7 +14,7 @@ The driver exposes one ordinary audio capture endpoint and one private non-audio
 
 The private WaveRT render-sink candidate was rejected because an active render endpoint that WASAPI can open also participates in the Windows audio endpoint model and cannot reliably be both usable and absent from ordinary application enumeration. The selected control interface does not create a producer-facing audio endpoint and does not map driver memory into user mode.
 
-The validation DACL grants access only to SYSTEM and Administrators. One open control handle owns the sender slot. Closing the handle or terminating its process releases the slot, closes the session, and flushes all buffered PCM.
+The current source defines a protected DACL that grants full control to SYSTEM and Administrators and only generic read/write to Interactive Users. It does not grant the producer interface to Everyone, Authenticated Users, Builtin Users, anonymous, guests or network logons. One project-owned create-dispatch owner holds the sender slot; a second authorized open receives an explicit busy result. Closing the handle, terminating its process or shutting down the driver releases ownership, closes the session and flushes all buffered PCM. Any local interactive process can still contend for this machine-wide slot, so per-executable trust, multi-session arbitration and a possible service-SID broker remain later installer/security decisions.
 
 ## Fixed protocol and buffer
 
@@ -30,12 +30,33 @@ Run the read-only preflight and clean unsigned package build from the repository
 
 ```powershell
 driver\windows\scripts\preflight.ps1
+driver\windows\scripts\verify-runtime-access-policy.ps1
 driver\windows\scripts\verify-upstream.ps1 -CheckoutRoot .tools\sysvad-upstream
 driver\windows\scripts\build-validation.ps1
-.tools\cargo-webrtc.cmd build -p mini-aec-sender --release
+.tools\cargo-webrtc.cmd build -p mini-aec-sender -p mini-aec-lab --release
 ```
 
 The driver script removes only ignored build output below `driver/windows`, rebuilds x64 Debug, verifies the INF contains `MiniAEC Microphone` and no render category, and writes an ignored package to `driver/windows/out/validation-x64-debug/`. The package contains the INF, SYS, and an unsigned CAT prepared by WDK Inf2Cat. It creates no certificate and makes no driver, device, boot, or certificate-store change.
+
+## Normal-user runtime validation
+
+Preview the separate runtime-only harness at any privilege level:
+
+```powershell
+driver\windows\scripts\runtime-access-validation.ps1 -Action Plan
+```
+
+After an administrator has installed and activated only the separately approved development package, open an ordinary non-elevated interactive PowerShell. The harness refuses elevated and non-interactive tokens, records token elevation/session metadata under ignored `artifacts/`, reads and verifies the installed control-device DACL, and never invokes signing, installation, device restart, uninstall, boot or default-role commands:
+
+```powershell
+driver\windows\scripts\runtime-access-validation.ps1 -Action Identity
+driver\windows\scripts\runtime-access-validation.ps1 -Action Transport
+driver\windows\scripts\runtime-access-validation.ps1 -Action Contention
+driver\windows\scripts\runtime-access-validation.ps1 -Action Bypass -MicrophoneId "<exact-physical-capture-endpoint-id>" -DurationSeconds 300
+driver\windows\scripts\runtime-access-validation.ps1 -Action Aec -MicrophoneId "<exact-physical-capture-endpoint-id>" -RenderId "<exact-physical-render-endpoint-id>" -DurationSeconds 300
+```
+
+`Transport` opens one session, writes one deterministic frame, reads diagnostics and closes without requiring a capture client to drain the ring. `Contention` holds one probe handle, requires a second process to report busy, and then proves fresh reconnection after owner exit. Bypass and AEC continue to require exact endpoint IDs and retain metadata-only evidence; Windows Recorder and the target meeting application are operated separately for listening and continuity acceptance.
 
 ## Lifecycle safety boundary
 

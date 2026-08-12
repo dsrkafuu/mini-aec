@@ -1,6 +1,7 @@
 #include <ntddk.h>
 #include <wdmsec.h>
 
+#include "MiniAecSecurity.h"
 #include "MiniAecTransport.h"
 
 namespace
@@ -534,7 +535,7 @@ MiniAecTransportInitialize(
     UNICODE_STRING securityDescriptor;
     RtlInitUnicodeString(&deviceName, MINIAEC_DEVICE_PATH);
     RtlInitUnicodeString(&symbolicLink, MINIAEC_DOS_DEVICE_PATH);
-    RtlInitUnicodeString(&securityDescriptor, L"D:P(A;;GA;;;SY)(A;;GA;;;BA)");
+    RtlInitUnicodeString(&securityDescriptor, MINIAEC_TRANSPORT_SDDL);
 
     NTSTATUS status = IoCreateDeviceSecure(
         DriverObject,
@@ -542,7 +543,7 @@ MiniAecTransportInitialize(
         &deviceName,
         FILE_DEVICE_UNKNOWN,
         FILE_DEVICE_SECURE_OPEN,
-        TRUE,
+        FALSE,
         &securityDescriptor,
         &MiniAecTransportClassGuid,
         &g_State.ControlDevice);
@@ -574,6 +575,12 @@ MiniAecTransportShutdown(
     )
 {
     PAGED_CODE();
+
+    KIRQL oldIrql;
+    KeAcquireSpinLock(&g_State.Lock, &oldIrql);
+    CloseSessionLocked();
+    g_State.OwnerFile = nullptr;
+    KeReleaseSpinLock(&g_State.Lock, oldIrql);
 
     if (g_State.SymbolicLinkCreated)
     {
