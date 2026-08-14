@@ -21,7 +21,7 @@ use std::time::Duration;
 use mini_aec_transport::{
   SessionState, SinkDiagnostics, SinkError, SinkErrorKind, VirtualMicrophoneSink,
 };
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 pub use aec::{
   DefaultEchoCancellerFactory, EchoCanceller, EchoCancellerError, EchoCancellerFactory,
@@ -38,7 +38,7 @@ pub const CHANNELS: u16 = 1;
 pub const INPUT_WAIT: Duration = Duration::from_millis(100);
 
 /// Product processing mode selected explicitly by the controller.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ProcessingMode {
   Bypass,
@@ -46,7 +46,7 @@ pub enum ProcessingMode {
 }
 
 /// Role of one explicitly selected physical Windows endpoint.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum InputRole {
   Microphone,
@@ -54,7 +54,7 @@ pub enum InputRole {
 }
 
 /// Configuration for one explicit real-time engine run.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct EngineConfig {
   pub mode: ProcessingMode,
   pub microphone_endpoint_id: String,
@@ -99,7 +99,7 @@ pub enum EngineCommand {
 }
 
 /// Observable lifecycle state of the real-time engine.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum EngineState {
   #[default]
@@ -113,7 +113,7 @@ pub enum EngineState {
 }
 
 /// Observable reason an AEC run is temporarily impaired.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum DegradationReason {
   RenderReferenceMissing,
@@ -123,7 +123,7 @@ pub enum DegradationReason {
 }
 
 /// Native metadata retained for the explicitly selected capture endpoint.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct SourceFormat {
   pub sample_rate_hz: u32,
   pub channels: u16,
@@ -131,7 +131,7 @@ pub struct SourceFormat {
 }
 
 /// Project-owned capture endpoint identity and display metadata.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct SourceDescriptor {
   pub role: InputRole,
   pub endpoint_id: String,
@@ -141,7 +141,7 @@ pub struct SourceDescriptor {
 }
 
 /// Metadata associated with one capture packet written into a caller-owned buffer.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 pub struct PacketMetadata {
   pub frames: usize,
   pub silent: bool,
@@ -152,7 +152,7 @@ pub struct PacketMetadata {
 }
 
 /// Project-owned physical capture failures.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SourceErrorKind {
   InvalidSource,
@@ -163,7 +163,7 @@ pub enum SourceErrorKind {
 }
 
 /// Actionable capture error without WASAPI or Windows types in the public contract.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct SourceError {
   pub kind: SourceErrorKind,
   pub message: String,
@@ -241,7 +241,7 @@ pub trait VirtualSinkFactory: Send + Sync {
 }
 
 /// Stable error categories reported by the engine controller and snapshots.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum EngineErrorKind {
   InvalidConfiguration,
@@ -267,7 +267,7 @@ pub enum EngineErrorKind {
 }
 
 /// Actionable terminal error for one engine run.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct EngineError {
   pub kind: EngineErrorKind,
   pub message: String,
@@ -331,7 +331,7 @@ impl Display for EngineError {
 impl Error for EngineError {}
 
 /// Metadata-only snapshot of the current or most recently completed run.
-#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 pub struct EngineSnapshot {
   pub state: EngineState,
   pub mode: Option<ProcessingMode>,
@@ -389,7 +389,7 @@ pub struct EngineSnapshot {
 }
 
 /// Bounded integer processing-time percentiles in microseconds.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 pub struct ProcessingTimeSnapshot {
   pub samples: u64,
   pub p50_us: u64,
@@ -399,7 +399,7 @@ pub struct ProcessingTimeSnapshot {
 }
 
 /// Engine-owned serialization of the virtual sink's versioned transport diagnostics.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct SinkTransportSnapshot {
   pub schema_version: u16,
   pub state: SinkTransportState,
@@ -443,7 +443,7 @@ impl From<SinkDiagnostics> for SinkTransportSnapshot {
 }
 
 /// Transport session state without exposing adapter-specific types in persisted evidence.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SinkTransportState {
   Closed,
@@ -460,16 +460,20 @@ impl From<SessionState> for SinkTransportState {
 }
 
 /// Metadata-only JSONL record emitted by validation controllers.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct ValidationEvent {
   pub schema_version: u16,
   pub unix_ms: u128,
+  #[serde(default)]
+  pub monotonic_elapsed_ms: u128,
+  #[serde(default)]
+  pub requested_duration_ms: u128,
   pub event: ValidationEventKind,
   pub snapshot: EngineSnapshot,
 }
 
 /// Reason a metadata-only validation snapshot was recorded.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ValidationEventKind {
   Started,

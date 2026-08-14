@@ -1,5 +1,6 @@
 mod offline;
 mod platform;
+mod stability;
 
 use std::path::PathBuf;
 use std::time::Duration;
@@ -31,6 +32,8 @@ enum Command {
   Bypass(BypassArgs),
   /// Run default WebRTC M131 AEC in real time with exact physical endpoint IDs.
   RealtimeAec(RealtimeAecArgs),
+  /// Analyze one metadata-only real-time run for clock drift and functional stability.
+  StabilityReport(StabilityReportArgs),
 }
 
 #[derive(Debug, Args)]
@@ -101,6 +104,25 @@ struct RealtimeAecArgs {
   output: PathBuf,
 }
 
+#[derive(Debug, Args)]
+struct StabilityReportArgs {
+  /// Metadata-only engine.jsonl below artifacts/ or driver/windows/out/.
+  #[arg(long)]
+  events: PathBuf,
+
+  /// Optional report path below artifacts/ or driver/windows/out/.
+  #[arg(long)]
+  output: Option<PathBuf>,
+
+  /// Optional JSON file containing ordinary-client, render-activity and listening observations.
+  #[arg(long)]
+  operator_observations: Option<PathBuf>,
+
+  /// Optional source revision recorded in the report.
+  #[arg(long)]
+  software_revision: Option<String>,
+}
+
 fn main() -> Result<()> {
   let cli = Cli::parse();
 
@@ -128,6 +150,16 @@ fn main() -> Result<()> {
       microphone_endpoint_id: args.microphone_id,
       render_endpoint_id: args.render_id,
     }),
+    Command::StabilityReport(args) => {
+      let output = stability::create_report(&stability::StabilityReportConfig {
+        events_path: args.events,
+        output_path: args.output,
+        operator_observations_path: args.operator_observations,
+        software_revision: args.software_revision,
+      })?;
+      println!("Long-run stability report: {}", output.display());
+      Ok(())
+    }
   }
 }
 
@@ -229,5 +261,21 @@ mod tests {
       "60"
     ])
     .is_err());
+  }
+
+  #[test]
+  fn stability_report_requires_an_event_stream() {
+    assert!(Cli::try_parse_from(["mini-aec-lab", "stability-report"]).is_err());
+    assert!(matches!(
+      Cli::try_parse_from([
+        "mini-aec-lab",
+        "stability-report",
+        "--events",
+        "artifacts/example/engine.jsonl"
+      ])
+      .expect("stability report arguments parse")
+      .command,
+      Command::StabilityReport(_)
+    ));
   }
 }

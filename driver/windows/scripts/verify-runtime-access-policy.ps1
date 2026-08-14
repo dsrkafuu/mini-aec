@@ -9,8 +9,9 @@ $transportPath = Join-Path $driverRoot 'mini-aec\MiniAecTransport.cpp'
 $protocolPath = Join-Path $driverRoot 'mini-aec\MiniAecProtocol.h'
 $infPath = Join-Path $driverRoot 'mini-aec\MiniAECValidation.inx'
 $runtimeValidationPath = Join-Path $scriptRoot 'runtime-access-validation.ps1'
+$longRunValidationPath = Join-Path $scriptRoot 'long-run-validation.ps1'
 
-foreach ($path in @($securityPath, $transportPath, $protocolPath, $infPath, $runtimeValidationPath)) {
+foreach ($path in @($securityPath, $transportPath, $protocolPath, $infPath, $runtimeValidationPath, $longRunValidationPath)) {
     if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
         throw "Required MiniAEC driver source is missing: $path"
     }
@@ -21,6 +22,7 @@ $transportText = Get-Content -LiteralPath $transportPath -Raw
 $protocolText = Get-Content -LiteralPath $protocolPath -Raw
 $infText = Get-Content -LiteralPath $infPath -Raw
 $runtimeValidationText = Get-Content -LiteralPath $runtimeValidationPath -Raw
+$longRunValidationText = Get-Content -LiteralPath $longRunValidationPath -Raw
 
 $expectedSddl = '#define MINIAEC_TRANSPORT_SDDL L"D:P(A;;GA;;;SY)(A;;GA;;;BA)(A;;GRGW;;;IU)"'
 if (-not $securityText.Contains($expectedSddl)) {
@@ -79,10 +81,19 @@ foreach ($forbiddenRuntimeCommand in @('pnputil', 'bcdedit', 'devcon', 'certutil
     if ($runtimeValidationText -match [regex]::Escape($forbiddenRuntimeCommand)) {
         throw "Normal-user runtime validation contains a forbidden lifecycle or elevation command: $forbiddenRuntimeCommand"
     }
+    if ($longRunValidationText -match [regex]::Escape($forbiddenRuntimeCommand)) {
+        throw "Long-run runtime validation contains a forbidden lifecycle or elevation command: $forbiddenRuntimeCommand"
+    }
 }
 foreach ($requiredRuntimeContract in @("[ValidateSet('Plan', 'Identity', 'Transport', 'Contention', 'Bypass', 'Aec')]", 'TokenInspector', 'DeviceSecurityInspector', "'S-1-5-4'", '--access-probe', '--microphone-id', '--render-id')) {
     if (-not $runtimeValidationText.Contains($requiredRuntimeContract)) {
         throw "Normal-user runtime validation is missing a required contract: $requiredRuntimeContract"
+    }
+}
+
+foreach ($requiredLongRunContract in @('runtime-access-validation.ps1', "'-loop', '0'", 'loudnorm=I=-14:TP=-1:LRA=5', "'-f', 'dshow'", 'client-recording.flac', '$consumer.WaitForExit(15000)', 'operator_observation_still_required = $true')) {
+    if (-not $longRunValidationText.Contains($requiredLongRunContract)) {
+        throw "Long-run runtime validation is missing a required contract: $requiredLongRunContract"
     }
 }
 

@@ -491,6 +491,7 @@ impl Engine {
     let mut snapshot = self.shared.snapshot.lock().expect("engine snapshot lock");
     snapshot.state = EngineState::Stopped;
     snapshot.queue_depth = 0;
+    snapshot.render_queue_depth = 0;
     Ok(())
   }
 
@@ -2075,6 +2076,9 @@ mod tests {
     engine
       .stop()
       .expect("active-silent-render cleanup succeeds");
+    let snapshot = engine.snapshot();
+    assert_eq!(snapshot.queue_depth, 0);
+    assert_eq!(snapshot.render_queue_depth, 0);
   }
 
   #[test]

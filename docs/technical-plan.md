@@ -1,6 +1,6 @@
 # MiniAEC 技术方案
 
-状态：M1 虚拟麦克风数据通路、M2 实时 bypass 与 M3 实时默认 AEC3 已通过各自的开发期 elevated 功能验收。M3 的合成自动化与单独批准的真机测试覆盖 Windows Recorder、Discord、较大音量 far-end 抑制、near-end-only、double-talk、render silence/recovery、sender contention、stop/start 和完整 rollback。Double-talk 可懂但存在明显近端吞字，作为冻结默认算法的已知质量限制保留，当前不调参；普通用户权限、正式安装签名、长期漂移与算法质量优化仍属于后续里程碑，因此项目尚不是可分发的普通用户产品
+状态：M1 虚拟麦克风数据通路、M2 实时 bypass、M3 实时默认 AEC3 与普通用户 runtime access 已通过各自的开发期功能验收和完整 rollback。M4 的 schema v2、离线长时稳定性分析器和合成验证已实现；在两次早期 K7 / Realtek speakers 尝试暴露并修复 final snapshot cleanup 缺陷和自动 render coverage 问题后，无人值守 30 分钟 run 已产生 conclusive `bounded-synchronizer-sufficient` drift 结果，metadata 与 transport 条件正常，functional gate 仅等待事后真实听感 observation。30 分钟是本 change 的最终时长 gate，不再要求两小时预发布验证；初期版本保留隐私受限的 metadata 诊断能力，只有真实日志证据才触发独立的延长验证 change。Double-talk 可懂但存在明显近端吞字，作为冻结默认算法的已知质量限制保留，当前不调参；正式安装签名、完整长时真机结论与算法质量优化仍属于后续工作，因此项目尚不是可分发的普通用户产品
 
 目标平台：Windows 11 x64
 
@@ -138,7 +138,7 @@ M3 实时 AEC 合同固定为：
 6. 检查非有限数和输出范围；
 7. 把结果写入虚拟麦克风数据通路。
 
-麦克风和 Sound Blaster 等播放设备可能使用独立硬件时钟。M3 只实现上节记录的有界短期对齐和终止策略；这不能证明长期稳定，也不宣称漂移校正。真机验收必须记录 timestamp delta、buffer depth、discontinuity 和长期方向，确认持续误差后再在 M4 设计小比例异步重采样，不能长期靠整帧丢弃或补零维持同步。
+麦克风和物理播放设备可能使用独立硬件时钟。M3 只实现上节记录的有界短期对齐和终止策略；这不能证明长期稳定，也不宣称漂移校正。真机验收必须记录 timestamp delta、buffer depth、discontinuity 和长期方向，确认持续误差后再在 M4 设计小比例异步重采样，不能长期靠整帧丢弃或补零维持同步。
 
 ## 5. 故障策略
 
@@ -215,9 +215,12 @@ mini-aec/
 
 ### M4：漂移与稳定性
 
-- 使用 K7 和 Sound Blaster X4 进行至少 30 分钟漂移测量；
-- 根据证据实现异步重采样控制；
-- 完成设备切换和两小时稳定性 gate。
+- 已实现 metadata schema v2 和 `stability-report`，用单调运行时间、两路 device-position/QPC clean segment、五分钟 rate windows、relative ppm、不确定度、同步后果和独立 functional gate 表征长时行为；
+- 使用 K7 和当前活动的 Realtek speakers 进行至少 30 分钟漂移测量，普通客户端必须持续消费 `MiniAEC Microphone`，raw evidence 与 operator observations 保留在 ignored `artifacts/`；
+- 只有 30 分钟结果为 `clock-drift-compensation-required` 时才另开 change 设计小比例异步重采样；`inconclusive` 只触发证据改进或重复运行；
+- 30 分钟是当前 change 的最终时长 gate；只有初期版本 metadata 日志显示重复同步维护、增长的队列压力、无法解释的 discontinuity 或其他持续风险时，才由独立 change 定义更长验证时长或补偿方案；设备切换仍属于后续独立能力。
+
+2026-08-12/13 的前两次 K7 / Realtek speakers 尝试分别暴露了旧 binary 的 final render-queue snapshot cleanup 缺陷和人工播放不足导致的 render coverage 问题。修复后使用 runtime-only 自动播放与普通 FFmpeg DirectShow client 消费完成第三次 30 分钟 run：observed duration 为 1,800.021 秒，periodic coverage 为 100%，usable duration 与最长 clean segment 均为 1,798.962 秒，无 excluded interval，并产生五个 eligible window；中位 drift 为 -2.832 ppm，MAD 为 0.149 ppm，median uncertainty 为 0.081 ppm，保守 drift 为 1.832 ppm，预计 30 分钟 phase 为 3.297 ms，因此 drift disposition 为 `bounded-synchronizer-sufficient`。双队列最终归零，driver overflow/discard、user-space overflow/discard、sink failure、invalid output、deadline miss 和 terminal error 均为零；所有 alignment/AEC recovery、单个 stale render frame 和六次新增 driver underrun 都发生在首个约 1.06 秒的启动收敛区间，之后未再增长。普通 client 与 playback process 覆盖完整 interval，用户核对录音后确认没有问题，operator sidecar 据此解释 bounded startup recovery，最终 functional disposition 为 `passed` 且 `thirty_minute_accepted` 为 true。批准的驱动 rollback 和用户手动重启后，最终只读 inventory 确认 validation device、endpoint、package、certificate、service 与服务注册表项均已移除，TESTSIGNING 为 No，K7 与 Realtek 继续分别拥有三个默认输入和输出角色。30 分钟结果完成本 change 的最终时长要求；当前证据既不支持创建 `compensate-audio-clock-drift` change，也不触发延长验证。
 
 ### M5：安装与签名
 
@@ -251,4 +254,4 @@ mini-aec/
 
 ## 10. SDD 状态
 
-仓库使用 OpenSpec 的 `spec-driven` schema 和 Codex 集成。M1、M2 与 M3 change 均已完成、同步 capability 并归档。`enable-normal-user-virtual-microphone-access` 修改 `virtual-microphone-transport` 与 `driver-development-lifecycle`，其仓库内 ACL、busy 语义、非提升验证工具、批准的真机 acceptance 和完整 rollback 已完成；任何后续 test-sign、install、device activation、uninstall 或 rollback 仍须另行批准，操作系统 restart 永远只由用户手动执行。
+仓库使用 OpenSpec 的 `spec-driven` schema 和 Codex 集成。M1、M2、M3、`enable-normal-user-virtual-microphone-access` 与 M4 `characterize-long-run-audio-stability` 均已完成、同步 capability 并归档，当前没有 active change。Normal-user access 的仓库内 ACL、busy 语义、非提升验证工具、批准的真机 acceptance 和完整 rollback 已完成；M4 的 30 分钟 K7/Realtek 稳定性 gate、operator observation、最终报告和完整 rollback 也已完成。任何后续 test-sign、install、device activation、uninstall 或 rollback 仍须另行批准，操作系统 restart 永远只由用户手动执行。

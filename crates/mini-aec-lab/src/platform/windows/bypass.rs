@@ -16,7 +16,7 @@ use mini_aec_windows_transport::WindowsVirtualMicrophoneSink;
 
 use crate::platform::{BypassConfig, RealtimeAecConfig};
 
-const VALIDATION_SCHEMA_VERSION: u16 = 1;
+const VALIDATION_SCHEMA_VERSION: u16 = 2;
 const SNAPSHOT_INTERVAL: Duration = Duration::from_secs(1);
 
 struct WindowsSinkFactory;
@@ -102,16 +102,29 @@ fn run_engine(
   label: &str,
 ) -> Result<()> {
   println!("{label} evidence: {}", run_dir.display());
+  let run_started = Instant::now();
   engine
     .start(config)
     .with_context(|| format!("failed to start the MiniAEC {label} engine"))?;
-  write_event(events, ValidationEventKind::Started, engine)?;
-  let deadline = Instant::now() + duration;
+  write_event(
+    events,
+    ValidationEventKind::Started,
+    engine,
+    Duration::ZERO,
+    duration,
+  )?;
+  let deadline = run_started + duration;
   while Instant::now() < deadline {
     thread::sleep(SNAPSHOT_INTERVAL.min(deadline.saturating_duration_since(Instant::now())));
     let snapshot = engine.snapshot();
     if snapshot.state == EngineState::Failed {
-      write_event(events, ValidationEventKind::Failed, engine)?;
+      write_event(
+        events,
+        ValidationEventKind::Failed,
+        engine,
+        run_started.elapsed(),
+        duration,
+      )?;
       let failure = snapshot.last_error.map_or_else(
         || "unknown engine failure".to_owned(),
         |error| error.to_string(),
@@ -122,12 +135,24 @@ fn run_engine(
         .with_context(|| format!("failed to flush {label} evidence"))?;
       bail!("{label} failed: {failure}");
     }
-    write_event(events, ValidationEventKind::Periodic, engine)?;
+    write_event(
+      events,
+      ValidationEventKind::Periodic,
+      engine,
+      run_started.elapsed(),
+      duration,
+    )?;
   }
   engine
     .stop()
     .with_context(|| format!("failed to stop the {label} engine"))?;
-  write_event(events, ValidationEventKind::Final, engine)?;
+  write_event(
+    events,
+    ValidationEventKind::Final,
+    engine,
+    run_started.elapsed(),
+    duration,
+  )?;
   events
     .flush()
     .with_context(|| format!("failed to flush {label} evidence"))?;
@@ -139,19 +164,37 @@ fn write_event(
   writer: &mut BufWriter<File>,
   event: ValidationEventKind,
   engine: &Engine,
+  monotonic_elapsed: Duration,
+  requested_duration: Duration,
 ) -> Result<()> {
-  serde_json::to_writer(
-    &mut *writer,
-    &ValidationEvent {
-      schema_version: VALIDATION_SCHEMA_VERSION,
-      unix_ms: unix_time_ms()?,
-      event,
-      snapshot: engine.snapshot(),
-    },
-  )?;
+  let record = validation_event(
+    event,
+    engine.snapshot(),
+    unix_time_ms()?,
+    monotonic_elapsed,
+    requested_duration,
+  );
+  serde_json::to_writer(&mut *writer, &record)?;
   writer.write_all(b"\n")?;
   writer.flush()?;
   Ok(())
+}
+
+fn validation_event(
+  event: ValidationEventKind,
+  snapshot: mini_aec_engine::EngineSnapshot,
+  unix_ms: u128,
+  monotonic_elapsed: Duration,
+  requested_duration: Duration,
+) -> ValidationEvent {
+  ValidationEvent {
+    schema_version: VALIDATION_SCHEMA_VERSION,
+    unix_ms,
+    monotonic_elapsed_ms: monotonic_elapsed.as_millis(),
+    requested_duration_ms: requested_duration.as_millis(),
+    event,
+    snapshot,
+  }
 }
 
 fn validated_evidence_root(requested: &Path) -> Result<PathBuf> {
@@ -194,8 +237,11 @@ fn unix_time_ms() -> Result<u128> {
 #[cfg(test)]
 mod tests {
   use std::path::Path;
+  use std::time::Duration;
 
-  use super::validated_evidence_root;
+  use mini_aec_engine::{EngineSnapshot, ValidationEvent, ValidationEventKind};
+
+  use super::{validated_evidence_root, validation_event};
 
   #[test]
   fn evidence_path_stays_in_ignored_private_or_validation_roots() {
@@ -203,5 +249,36 @@ mod tests {
     assert!(validated_evidence_root(Path::new("driver/windows/out/validation/engine")).is_ok());
     assert!(validated_evidence_root(Path::new("testdata/private-audio")).is_err());
     assert!(validated_evidence_root(Path::new("artifacts/../testdata")).is_err());
+  }
+
+  #[test]
+  fn schema_v2_event_records_monotonic_and_requested_duration() {
+    let event = validation_event(
+      ValidationEventKind::Started,
+      EngineSnapshot::default(),
+      123,
+      Duration::ZERO,
+      Duration::from_mins(30),
+    );
+    let serialized = serde_json::to_string(&event).expect("schema v2 event serializes");
+    let parsed: ValidationEvent =
+      serde_json::from_str(&serialized).expect("schema v2 event parses");
+    assert_eq!(parsed.schema_version, 2);
+    assert_eq!(parsed.monotonic_elapsed_ms, 0);
+    assert_eq!(parsed.requested_duration_ms, 1_800_000);
+  }
+
+  #[test]
+  fn schema_v1_event_defaults_new_timing_fields_for_diagnostics() {
+    let serialized = serde_json::json!({
+      "schema_version": 1,
+      "unix_ms": 123,
+      "event": "started",
+      "snapshot": EngineSnapshot::default(),
+    });
+    let parsed: ValidationEvent =
+      serde_json::from_value(serialized).expect("schema v1 event remains readable");
+    assert_eq!(parsed.monotonic_elapsed_ms, 0);
+    assert_eq!(parsed.requested_duration_ms, 0);
   }
 }

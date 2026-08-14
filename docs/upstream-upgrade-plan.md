@@ -60,7 +60,7 @@ Each candidate must process the same inputs as the frozen baseline:
 | Echo-path change | Move or rotate microphone/speaker during playback | Reset and recovery time |
 | Nonlinear path | High speaker level and controlled mic clipping | Residual distorted echo |
 | Delay change | Buffer/device disturbance where reproducible | Loss of alignment |
-| Long run | At least 30 minutes, later the two-hour gate | Clock drift and stability |
+| Long run | At least 30 minutes; longer evidence only when early-version diagnostics show a concrete risk | Clock drift and stability |
 
 Private room recordings stay under ignored `artifacts/`. Redistributable automated regression material belongs under `testdata/` only when its source and license are recorded. A high-quality double-talk corpus should include an isolated near-end reference when possible so voice preservation can be measured instead of judged only by output energy.
 
