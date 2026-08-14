@@ -4,12 +4,18 @@ logs/
 /target
 artifacts/
 driver/windows/out/
-.tools/
+.tools/*
+!.tools/build-webrtc.cmd
+!.tools/cargo-webrtc.cmd
+!.tools/resume-ninja.cmd
+!.tools/rust-analyzer.cmd
 *.local
 
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json
+!.vscode/settings.json
+!.vscode/c_cpp_properties.json
 .idea
 .DS_Store
 *.suo

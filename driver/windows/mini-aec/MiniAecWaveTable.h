@@ -1,5 +1,8 @@
 #pragma once
 
+#include "MiniAecProtocol.h"
+#include "../vendor/sysvad/sysvad.h"
+
 static KSDATAFORMAT_WAVEFORMATEXTENSIBLE MiniAecPinSupportedDeviceFormats[] = {
     {{sizeof(KSDATAFORMAT_WAVEFORMATEXTENSIBLE), 0, 0, 0,
       STATICGUIDOF(KSDATAFORMAT_TYPE_AUDIO),

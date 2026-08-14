@@ -137,6 +137,8 @@ The safe Rust wrapper is pinned to `webrtc-audio-processing 2.1.0` from crates.i
 
 Build from an x64 Visual Studio Developer PowerShell with the C++ build tools, Meson, Ninja, and libclang available. This workspace keeps a repository-relative helper at `.tools/cargo-webrtc.cmd`; Cargo/Meson builds can be resumed with `.tools/resume-ninja.cmd` without depending on a stale build-directory hash.
 
+VS Code uses the tracked `.vscode/settings.json` and `.tools/rust-analyzer.cmd` wrapper so rust-analyzer build-script loading and on-save checks inherit the same x64 Visual Studio, repository-local Meson/Ninja, and libclang environment. The tracked `.vscode/c_cpp_properties.json` supplies the matching x64 MSVC, Windows 11 WDK headers, and driver preprocessor definitions to the C/C++ extension. After cloning or changing this configuration, reload the VS Code window; the first native WebRTC analysis build may take several minutes. Only the project-owned root `.tools/*.cmd` entry points are tracked—downloaded tool runtimes and upstream checkouts below `.tools/` remain ignored.
+
 ## Checks
 
 ```powershell
