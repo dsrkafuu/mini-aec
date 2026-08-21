@@ -1,0 +1,116 @@
+[Version]
+Signature = "$Windows NT$"
+Class = MEDIA
+Provider = %ProviderName%
+ClassGUID = {4d36e96c-e325-11ce-bfc1-08002be10318}
+DriverVer = 08/21/2026,1.0.0.0
+CatalogFile = MiniAECProduction.cat
+PnpLockDown = 1
+
+[SourceDisksNames]
+222 = "MiniAEC Production Driver Disk","",222
+
+[SourceDisksFiles]
+MiniAECProduction.sys = 222
+
+[SignatureAttributes]
+MiniAECProduction.sys = SignatureAttributes.DRM
+
+[SignatureAttributes.DRM]
+DRMLevel = 1300
+
+[Manufacturer]
+%ManufacturerName% = MiniAEC,NTamd64.10.0...22621
+
+[MiniAEC.NTamd64.10.0...22621]
+%DeviceDescription% = MiniAEC_Device,Root\MiniAECProduction
+
+[DestinationDirs]
+MiniAEC.CopyList = 13
+
+[MiniAEC.CopyList]
+MiniAECProduction.sys
+
+[MiniAEC.AddReg]
+HKR,,AssociatedFilters,,"wdmaud,swmidi,redbook"
+HKR,,Driver,,MiniAECProduction.sys
+HKR,Drivers,SubClasses,,"wave,midi,mixer"
+HKR,Drivers\wave\wdmaud.drv,Driver,,wdmaud.drv
+HKR,Drivers\midi\wdmaud.drv,Driver,,wdmaud.drv
+HKR,Drivers\mixer\wdmaud.drv,Driver,,wdmaud.drv
+HKR,Drivers\wave\wdmaud.drv,Description,,%DeviceDescription%
+HKR,Drivers\midi\wdmaud.drv,Description,,%MidiDescription%
+HKR,Drivers\mixer\wdmaud.drv,Description,,%DeviceDescription%
+HKR,%MediaCategories%\%MicInCustomNameGuid%,Name,,%EndpointName%
+
+[MiniAEC.I.WaveMicIn]
+AddReg = MiniAEC.I.WaveMicIn.AddReg
+
+[MiniAEC.I.WaveMicIn.AddReg]
+HKR,,CLSID,,%ProxyClsid%
+HKR,,FriendlyName,,%EndpointName%
+
+[MiniAEC.I.TopologyMicIn]
+AddReg = MiniAEC.I.TopologyMicIn.AddReg
+
+[MiniAEC.I.TopologyMicIn.AddReg]
+HKR,,CLSID,,%ProxyClsid%
+HKR,,FriendlyName,,%EndpointName%
+HKR,EP\0,%PKEY_AudioEndpoint_Association%,,%KSNODETYPE_ANY%
+HKR,EP\0,%PKEY_AudioEndpoint_Supports_EventDriven_Mode%,0x00010001,0x1
+
+[MiniAEC_Device.NT]
+Include = ks.inf,wdmaudio.inf
+Needs = KS.Registration,WDMAUDIO.Registration
+CopyFiles = MiniAEC.CopyList
+AddReg = MiniAEC.AddReg
+
+[MiniAEC_Device.NT.Interfaces]
+AddInterface = %KSCATEGORY_AUDIO%,%KSNAME_WaveMicIn%,MiniAEC.I.WaveMicIn
+AddInterface = %KSCATEGORY_REALTIME%,%KSNAME_WaveMicIn%,MiniAEC.I.WaveMicIn
+AddInterface = %KSCATEGORY_CAPTURE%,%KSNAME_WaveMicIn%,MiniAEC.I.WaveMicIn
+AddInterface = %KSCATEGORY_AUDIO%,%KSNAME_TopologyMicIn%,MiniAEC.I.TopologyMicIn
+AddInterface = %KSCATEGORY_TOPOLOGY%,%KSNAME_TopologyMicIn%,MiniAEC.I.TopologyMicIn
+
+[MiniAEC_Device.NT.Services]
+AddService = MiniAECProduction,0x00000002,MiniAECProduction_Service
+
+[MiniAECProduction_Service]
+DisplayName = %ServiceDescription%
+ServiceType = 1
+StartType = 3
+ErrorControl = 1
+ServiceBinary = %13%\MiniAECProduction.sys
+
+[MiniAEC_Device.NT.HW]
+AddReg = MiniAEC.Hardware.AddReg
+
+[MiniAEC.Hardware.AddReg]
+HKR,,DeviceType,0x00010001,0x0000001D
+HKR,,Security,,"D:P(A;;GA;;;SY)(A;;GRGWGX;;;BA)(A;;GRGWGX;;;WD)(A;;GRGWGX;;;RC)"
+
+[MiniAEC_Device.NT.Wdf]
+KmdfService = MiniAECProduction,MiniAEC.Wdf
+
+[MiniAEC.Wdf]
+KmdfLibraryVersion = $KMDFVERSION$
+
+[Strings]
+ProviderName = "MiniAEC"
+ManufacturerName = "MiniAEC"
+DeviceDescription = "MiniAEC Virtual Audio Device"
+ServiceDescription = "MiniAEC Virtual Audio Device Production Driver"
+MidiDescription = "MiniAEC Virtual Audio Device MIDI"
+EndpointName = "MiniAEC Microphone"
+KSNAME_WaveMicIn = "WaveMicIn"
+KSNAME_TopologyMicIn = "TopologyMicIn"
+ProxyClsid = "{17CCA71B-ECD7-11D0-B908-00A0C9223196}"
+KSCATEGORY_AUDIO = "{6994AD04-93EF-11D0-A3CC-00A0C9223196}"
+KSCATEGORY_CAPTURE = "{65E8773D-8F56-11D0-A3B9-00A0C9223196}"
+KSCATEGORY_REALTIME = "{EB115FFC-10C8-4964-831D-6DCB02E6F23F}"
+KSCATEGORY_TOPOLOGY = "{DDA54A40-1E4C-11D1-A050-405705C10000}"
+KSNODETYPE_ANY = "{00000000-0000-0000-0000-000000000000}"
+PKEY_AudioEndpoint_Association = "{1DA5D803-D492-4EDD-8C23-E0C0FFEE7F0E},2"
+PKEY_AudioEndpoint_Supports_EventDriven_Mode = "{1DA5D803-D492-4EDD-8C23-E0C0FFEE7F0E},7"
+MediaCategories = "MediaCategories"
+MicInCustomNameGuid = "{d48deb08-fd1c-4d1e-b821-9064d49ae96e}"

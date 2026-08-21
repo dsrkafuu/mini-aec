@@ -24,10 +24,23 @@
     <KMDF_VERSION_MAJOR>1</KMDF_VERSION_MAJOR>
     <SupportsPackaging>false</SupportsPackaging>
     <RequiresPackageProject>true</RequiresPackageProject>
+    <MiniAecInf Condition="'$(MiniAecInf)' == ''">..\..\..\mini-aec\MiniAECValidation.inx</MiniAecInf>
     <Configuration Condition="'$(Configuration)' == ''">Debug</Configuration>
     <Platform Condition="'$(Platform)' == ''">x64</Platform>
     <SampleGuid>{2A9A946E-F017-4E0D-BF75-AD81E7E97D64}</SampleGuid>
   </PropertyGroup>
+  <PropertyGroup>
+    <MiniAecDriverDate Condition="'$(MiniAecDriverDate)' == ''">08/21/2026</MiniAecDriverDate>
+    <MiniAecDriverVersion Condition="'$(MiniAecDriverVersion)' == ''">1.0.0.0</MiniAecDriverVersion>
+  </PropertyGroup>
+  <ItemDefinitionGroup Condition="'$(MiniAecReproducible)' == 'true'">
+    <Inf>
+      <SpecifyDriverVerDirectiveDate>true</SpecifyDriverVerDirectiveDate>
+      <DateStamp>$(MiniAecDriverDate)</DateStamp>
+      <SpecifyDriverVerDirectiveVersion>true</SpecifyDriverVerDirectiveVersion>
+      <TimeStamp>$(MiniAecDriverVersion)</TimeStamp>
+    </Inf>
+  </ItemDefinitionGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
   <PropertyGroup Label="Configuration" Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
     <TargetVersion>Windows10</TargetVersion>
@@ -185,6 +198,7 @@
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
     <Link>
       <AdditionalDependencies>%(AdditionalDependencies);.\..\EndpointsCommon\$(IntDir)\EndpointsCommon.lib</AdditionalDependencies>
+      <AdditionalOptions Condition="'$(MiniAecReproducible)' == 'true'">%(AdditionalOptions) /Brepro</AdditionalOptions>
     </Link>
     <ClCompile>
       <LanguageStandard>stdcpp17</LanguageStandard>
@@ -300,7 +314,7 @@
     <ResourceCompile Include="TabletAudioSample.rc" />
   </ItemGroup>
   <ItemGroup>
-    <Inf Exclude="@(Inx)" Include="..\..\..\mini-aec\MiniAECValidation.inx" />
+    <Inf Exclude="@(Inx)" Include="$(MiniAecInf)" />
     <FilesToPackage Include="$(TargetPath)" Condition="'$(ConfigurationType)'=='Driver' or '$(ConfigurationType)'=='DynamicLibrary'" />
   </ItemGroup>
   <ItemGroup>

@@ -26,7 +26,8 @@ production-release/
 │  ├─ MiniAECProduction.sys
 │  └─ MiniAECProduction.cat
 └─ trust/
-   └─ signing-evidence.json
+   ├─ signing-evidence.json
+   └─ SysVAD-MS-PL.txt
 ```
 
 `manifest.json` 至少声明 product/runtime/driver identity、release version、Windows 11 x64 target、`MiniAEC Microphone` endpoint、`MiniAECTransport` producer interface、protocol version、diagnostics schema、PCM contract、runtime/driver compatibility range、包内相对路径和 production trust evidence。
@@ -35,13 +36,15 @@ production-release/
 
 ## Non-mutating preflight
 
-预检只读取包内容，不安装 driver、不写 certificate store、不改变 BCD、device、default roles 或 service：
+预检只读取包内容，不安装 driver、不写 certificate store、不改变 BCD、device、default roles 或 service；生产包构建、正式签名和 replay 规则见 [`docs/production-driver-package.md`](production-driver-package.md)：
 
 ```powershell
 .tools\cargo-webrtc.cmd run -p mini-aec-release -- preflight --package <production-release-directory>
 ```
 
-预检 fail closed，至少检查：manifest schema、product identity、Windows target、endpoint/protocol/PCM contract、runtime/driver versions、compatibility ranges、production trust channel、signature evidence、development/test-signing 标记、包内相对路径和必需文件，以及私密 signing-material suffix。
+该 Rust preflight 只接受已完成正式签名和独立 replay 的 candidate；`verify-production-package.ps1 -AllowUnsigned` 只用于构建阶段的 unsigned 结构检查，不能替代最终 preflight。预检 fail closed，至少检查：manifest/evidence schema、product identity、Windows target、endpoint/protocol/PCM contract、runtime/driver versions、compatibility ranges、pinned SysVAD provenance、canonical INF/SYS digests、CAT member coverage、production trust chain、development/test-signing 标记、包内相对路径和必需文件，以及私密 signing-material、audio 和 `artifacts/` content。
+
+package verifier 的通过结果是 metadata-only handoff；它不代表 endpoint activation、driver installation、default-input selection 或 lifecycle `Verified` 状态。只有 `production-driver-lifecycle` 的独立 authorization 和 staging/activation 流程才能进行系统变更。
 
 ## Lifecycle states
 

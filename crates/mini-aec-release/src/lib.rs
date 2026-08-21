@@ -6,14 +6,16 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
-use std::fmt::{self, Display, Formatter};
+use std::fmt::{self, Display, Formatter, Write as _};
 use std::fs;
 use std::path::{Component as PathComponent, Path, PathBuf};
 
 use semver::Version;
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 
 pub const RELEASE_MANIFEST_SCHEMA_VERSION: u16 = 1;
+pub const PACKAGE_EVIDENCE_SCHEMA_VERSION: u16 = 1;
 pub const INVENTORY_SCHEMA_VERSION: u16 = 1;
 pub const PRODUCT_NAME: &str = "MiniAEC";
 pub const PRODUCT_IDENTIFIER: &str = "mini-aec";
@@ -24,8 +26,26 @@ pub const PRODUCER_INTERFACE_NAME: &str = "MiniAECTransport";
 pub const TRANSPORT_PROTOCOL_VERSION: u16 = 1;
 pub const DIAGNOSTICS_SCHEMA_VERSION: u16 = 2;
 pub const MANIFEST_FILE_NAME: &str = "manifest.json";
+pub const SYSVAD_REPOSITORY: &str = "https://github.com/microsoft/Windows-driver-samples";
+pub const SYSVAD_PATH: &str = "audio/sysvad";
+pub const SYSVAD_COMMIT: &str = "2ee527bfeb0aeb6be11f0a8b6dce4011b358ce89";
+pub const SYSVAD_LICENSE: &str = "MS-PL";
+pub const SYSVAD_RECORD_PATH: &str = "driver/windows/UPSTREAM.md";
+pub const PRODUCTION_DRIVER_IDENTITY: &str = "mini-aec-windows-driver";
+pub const PRODUCTION_DRIVER_INF_PATH: &str = "driver/MiniAECProduction.inf";
+pub const PRODUCTION_DRIVER_BINARY_PATH: &str = "driver/MiniAECProduction.sys";
+pub const PRODUCTION_DRIVER_CATALOG_PATH: &str = "driver/MiniAECProduction.cat";
+pub const PRODUCTION_DRIVER_NOTICE_PATH: &str = "trust/SysVAD-MS-PL.txt";
 
 const PRIVATE_SIGNING_SUFFIXES: [&str; 5] = ["pfx", "p12", "pvk", "key", "snk"];
+const PRIVATE_AUDIO_SUFFIXES: [&str; 5] = ["wav", "flac", "mp3", "m4a", "pcm"];
+const LOCAL_PATCH_PATHS: [&str; 5] = [
+  "adapter.cpp",
+  "EndpointsCommon/minwavertstream.cpp",
+  "TabletAudioSample/micinwavtable.h",
+  "TabletAudioSample/minipairs.h",
+  "TabletAudioSample/TabletAudioSample.vcxproj",
+];
 
 /// A complete production release identity and compatibility contract.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -160,6 +180,148 @@ impl PackageFiles {
   }
 }
 
+/// Public, machine-readable evidence for a reproducible production package.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct PackageEvidence {
+  pub schema_version: u16,
+  pub package_identifier: String,
+  pub package_version: String,
+  pub source: SourceProvenance,
+  pub build: BuildProvenance,
+  pub files: Vec<PackageFileEvidence>,
+  pub catalog: CatalogEvidence,
+  pub reproducibility: ReproducibilityEvidence,
+  pub signing: SigningEvidence,
+  pub verification: VerificationEvidence,
+  pub privacy: PrivacyEvidence,
+}
+
+/// Immutable upstream and local-source identity used to produce a driver package.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct SourceProvenance {
+  pub repository: String,
+  pub path: String,
+  pub commit: String,
+  pub license: String,
+  pub record_path: String,
+  pub source_tree_sha256: String,
+  pub imported_file_set_sha256: String,
+  pub local_patches: Vec<LocalPatchEvidence>,
+}
+
+/// One project-owned difference from the pinned upstream source slice.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct LocalPatchEvidence {
+  pub path: String,
+  pub sha256: String,
+}
+
+/// Toolchain and command provenance for a package build.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct BuildProvenance {
+  pub windows: String,
+  pub visual_studio: String,
+  pub msbuild_version: String,
+  pub msvc_version: String,
+  pub sdk_version: String,
+  pub wdk_version: String,
+  pub inf2cat_version: String,
+  pub signtool_version: String,
+  pub configuration: String,
+  pub platform: String,
+  pub commands: Vec<String>,
+  pub canonicalization: String,
+}
+
+/// Hash and size evidence for one release input or payload file.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct PackageFileEvidence {
+  pub path: String,
+  pub kind: String,
+  pub sha256: String,
+  pub size_bytes: u64,
+}
+
+/// Catalog member coverage for the final INF and SYS files.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct CatalogEvidence {
+  pub path: String,
+  pub members: BTreeMap<String, String>,
+  pub coverage_verified: bool,
+}
+
+/// Reproducibility evidence that excludes variable detached-signature bytes.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ReproducibilityEvidence {
+  pub canonical_payload_sha256: String,
+  pub catalog_member_set_sha256: String,
+  pub replay_verified: bool,
+  pub signature_bytes_excluded: bool,
+}
+
+/// Public trust result for the catalog and its INF/SYS members.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+#[allow(
+  clippy::struct_excessive_bools,
+  reason = "each catalog, coverage, embedded-signature, and TESTSIGNING result is independent evidence"
+)]
+pub struct SigningEvidence {
+  pub route: String,
+  pub signer_subject: String,
+  pub signer_thumbprint: String,
+  pub public_chain: Vec<CertificateEvidence>,
+  pub cat_signature_verified: bool,
+  pub inf_catalog_coverage_verified: bool,
+  pub sys_catalog_coverage_verified: bool,
+  pub sys_embedded_signature_required: bool,
+  pub sys_embedded_signature_verified: bool,
+  pub test_signing_required: bool,
+  pub signature_timestamp: String,
+}
+
+/// Public certificate identity metadata; no private key material is allowed.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct CertificateEvidence {
+  pub subject: String,
+  pub issuer: String,
+  pub thumbprint: String,
+  pub sha256: String,
+}
+
+/// Verification commands and read-only result state.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct VerificationEvidence {
+  pub verified: bool,
+  pub replay_verified: bool,
+  pub read_only: bool,
+  pub tool: String,
+  pub commands: Vec<String>,
+}
+
+/// Privacy and secret-material assertions for a release package.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+#[allow(
+  clippy::struct_excessive_bools,
+  reason = "each prohibited-content class is reported independently for release review"
+)]
+pub struct PrivacyEvidence {
+  pub private_signing_material_present: bool,
+  pub audio_content_present: bool,
+  pub artifacts_content_present: bool,
+  pub machine_secret_material_present: bool,
+}
+
 impl ReleaseManifest {
   /// Parses a manifest without performing filesystem or Windows state access.
   ///
@@ -189,6 +351,10 @@ impl ReleaseManifest {
   ///
   /// Returns an error when the product identity, target, transport, compatibility range, trust
   /// evidence, or package paths do not satisfy the production contract.
+  #[allow(
+    clippy::too_many_lines,
+    reason = "the release manifest is the single validation boundary for all fixed package contracts"
+  )]
   pub fn validate(&self) -> Result<(), ManifestError> {
     if self.schema_version != RELEASE_MANIFEST_SCHEMA_VERSION {
       return Err(ManifestError::UnsupportedValue {
@@ -219,7 +385,7 @@ impl ReleaseManifest {
     require_exact(
       "driver.identifier",
       &self.driver.identifier,
-      "mini-aec-windows-driver",
+      PRODUCTION_DRIVER_IDENTITY,
     )?;
     require_version("driver.version", &self.driver.version)?;
 
@@ -260,6 +426,32 @@ impl ReleaseManifest {
       &480,
     )?;
     self.compatibility.validate()?;
+
+    require_exact(
+      "files.runtime_executable",
+      &self.files.runtime_executable,
+      "runtime/mini-aec.exe",
+    )?;
+    require_exact(
+      "files.driver_inf",
+      &self.files.driver_inf,
+      PRODUCTION_DRIVER_INF_PATH,
+    )?;
+    require_exact(
+      "files.driver_binary",
+      &self.files.driver_binary,
+      PRODUCTION_DRIVER_BINARY_PATH,
+    )?;
+    require_exact(
+      "files.driver_catalog",
+      &self.files.driver_catalog,
+      PRODUCTION_DRIVER_CATALOG_PATH,
+    )?;
+    require_exact(
+      "files.signing_evidence",
+      &self.files.signing_evidence,
+      "trust/signing-evidence.json",
+    )?;
 
     if self.trust.channel != ReleaseChannel::Production {
       return Err(ManifestError::UnsupportedValue {
@@ -322,6 +514,7 @@ impl ReleaseManifest {
 pub struct PackagePreflight {
   pub package_root: PathBuf,
   pub manifest: ReleaseManifest,
+  pub evidence: PackageEvidence,
   pub verified_files: Vec<PathBuf>,
 }
 
@@ -329,8 +522,8 @@ pub struct PackagePreflight {
 ///
 /// # Errors
 ///
-/// Returns an error when the package directory, manifest, required files, relative paths, or
-/// signing-material boundary is invalid.
+/// Returns an error when the package directory, manifest, evidence, required files, hashes,
+/// signatures, relative paths, or signing-material boundary is invalid.
 pub fn preflight_package(root: &Path) -> Result<PackagePreflight, ReleaseError> {
   if !root.is_dir() {
     return Err(ReleaseError::PackageRootMissing(root.to_path_buf()));
@@ -348,13 +541,32 @@ pub fn preflight_package(root: &Path) -> Result<PackagePreflight, ReleaseError> 
     }
     verified_files.push(full_path);
   }
+  let notice_path = root.join(safe_relative_path(PRODUCTION_DRIVER_NOTICE_PATH)?);
+  if !notice_path.is_file() {
+    return Err(ReleaseError::RequiredFileMissing(notice_path));
+  }
+  verified_files.push(notice_path);
   if let Some(private_path) = find_private_signing_material(root)? {
     return Err(ReleaseError::PrivateSigningMaterial(private_path));
   }
+  if let Some(forbidden_path) = find_forbidden_package_content(root)? {
+    return Err(ReleaseError::ForbiddenPackageContent(forbidden_path));
+  }
+
+  let evidence_path = root.join(safe_relative_path(&manifest.files.signing_evidence)?);
+  let evidence_json = fs::read_to_string(&evidence_path).map_err(|error| ReleaseError::Io {
+    path: evidence_path.clone(),
+    message: error.to_string(),
+  })?;
+  let evidence: PackageEvidence = serde_json::from_str(&evidence_json).map_err(|error| {
+    ReleaseError::Evidence(PackageEvidenceError::InvalidJson(error.to_string()))
+  })?;
+  validate_package_evidence(root, &manifest, &evidence)?;
 
   Ok(PackagePreflight {
     package_root: root.to_path_buf(),
     manifest,
+    evidence,
     verified_files,
   })
 }
@@ -565,10 +777,12 @@ impl LifecycleInventory {
 pub enum ReleaseError {
   Io { path: PathBuf, message: String },
   Manifest(ManifestError),
+  Evidence(PackageEvidenceError),
   PackageRootMissing(PathBuf),
   RequiredFileMissing(PathBuf),
   UnsafeRelativePath(String),
   PrivateSigningMaterial(PathBuf),
+  ForbiddenPackageContent(PathBuf),
 }
 
 impl Display for ReleaseError {
@@ -576,6 +790,7 @@ impl Display for ReleaseError {
     match self {
       Self::Io { path, message } => write!(formatter, "I/O error at {}: {message}", path.display()),
       Self::Manifest(error) => write!(formatter, "manifest validation failed: {error}"),
+      Self::Evidence(error) => write!(formatter, "package evidence validation failed: {error}"),
       Self::PackageRootMissing(path) => {
         write!(
           formatter,
@@ -601,11 +816,114 @@ impl Display for ReleaseError {
         "private signing material is present in the production package: {}",
         path.display()
       ),
+      Self::ForbiddenPackageContent(path) => write!(
+        formatter,
+        "private audio or artifacts content is present in the production package: {}",
+        path.display()
+      ),
     }
   }
 }
 
 impl Error for ReleaseError {}
+
+impl From<PackageEvidenceError> for ReleaseError {
+  fn from(error: PackageEvidenceError) -> Self {
+    Self::Evidence(error)
+  }
+}
+
+/// Evidence mismatch detected by the non-mutating package preflight.
+#[derive(Debug, Eq, PartialEq)]
+pub enum PackageEvidenceError {
+  InvalidJson(String),
+  InvalidValue {
+    field: String,
+    message: String,
+  },
+  FileHashMismatch {
+    path: String,
+    expected: String,
+    actual: String,
+  },
+  FileSizeMismatch {
+    path: String,
+    expected: u64,
+    actual: u64,
+  },
+  MissingFileEvidence(String),
+  UnexpectedFileEvidence(String),
+  CatalogMemberMismatch {
+    path: String,
+    expected: String,
+    actual: String,
+  },
+  DigestMismatch {
+    field: String,
+    expected: String,
+    actual: String,
+  },
+  ForbiddenCommand(String),
+}
+
+impl Display for PackageEvidenceError {
+  fn fmt(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
+    match self {
+      Self::InvalidJson(message) => write!(formatter, "invalid package evidence JSON: {message}"),
+      Self::InvalidValue { field, message } => write!(formatter, "{field}: {message}"),
+      Self::FileHashMismatch {
+        path,
+        expected,
+        actual,
+      } => write!(
+        formatter,
+        "{path} SHA-256 mismatch: expected {expected}, got {actual}"
+      ),
+      Self::FileSizeMismatch {
+        path,
+        expected,
+        actual,
+      } => write!(
+        formatter,
+        "{path} size mismatch: expected {expected}, got {actual}"
+      ),
+      Self::MissingFileEvidence(path) => {
+        write!(
+          formatter,
+          "package evidence is missing file record for {path}"
+        )
+      }
+      Self::UnexpectedFileEvidence(path) => {
+        write!(
+          formatter,
+          "package evidence contains unexpected file record {path}"
+        )
+      }
+      Self::CatalogMemberMismatch {
+        path,
+        expected,
+        actual,
+      } => write!(
+        formatter,
+        "catalog member {path} mismatch: expected {expected}, got {actual}"
+      ),
+      Self::DigestMismatch {
+        field,
+        expected,
+        actual,
+      } => write!(
+        formatter,
+        "{field} mismatch: expected {expected}, got {actual}"
+      ),
+      Self::ForbiddenCommand(command) => write!(
+        formatter,
+        "package evidence contains a forbidden machine-changing command: {command}"
+      ),
+    }
+  }
+}
+
+impl Error for PackageEvidenceError {}
 
 /// Manifest parsing and contract validation errors.
 #[derive(Debug, Eq, PartialEq)]
@@ -872,6 +1190,538 @@ fn find_private_signing_material(root: &Path) -> Result<Option<PathBuf>, Release
   Ok(None)
 }
 
+fn find_forbidden_package_content(root: &Path) -> Result<Option<PathBuf>, ReleaseError> {
+  let entries = fs::read_dir(root).map_err(|error| ReleaseError::Io {
+    path: root.to_path_buf(),
+    message: error.to_string(),
+  })?;
+  for entry in entries {
+    let entry = entry.map_err(|error| ReleaseError::Io {
+      path: root.to_path_buf(),
+      message: error.to_string(),
+    })?;
+    let path = entry.path();
+    let file_type = entry.file_type().map_err(|error| ReleaseError::Io {
+      path: path.clone(),
+      message: error.to_string(),
+    })?;
+    if file_type.is_dir() {
+      if path.file_name().is_some_and(|name| name == "artifacts") {
+        return Ok(Some(path));
+      }
+      if let Some(found) = find_forbidden_package_content(&path)? {
+        return Ok(Some(found));
+      }
+    } else if file_type.is_file()
+      && path.extension().is_some_and(|extension| {
+        let extension = extension.to_string_lossy().to_ascii_lowercase();
+        PRIVATE_AUDIO_SUFFIXES.contains(&extension.as_str())
+      })
+    {
+      return Ok(Some(path));
+    }
+  }
+  Ok(None)
+}
+
+#[allow(
+  clippy::too_many_lines,
+  reason = "the evidence validator deliberately fails closed across every release proof field"
+)]
+fn validate_package_evidence(
+  root: &Path,
+  manifest: &ReleaseManifest,
+  evidence: &PackageEvidence,
+) -> Result<(), ReleaseError> {
+  if evidence.schema_version != PACKAGE_EVIDENCE_SCHEMA_VERSION {
+    return Err(evidence_invalid(
+      "schema_version",
+      format!(
+        "expected {}, got {}",
+        PACKAGE_EVIDENCE_SCHEMA_VERSION, evidence.schema_version
+      ),
+    ));
+  }
+  require_evidence_exact(
+    "package_identifier",
+    &evidence.package_identifier,
+    PRODUCT_IDENTIFIER,
+  )?;
+  require_evidence_exact(
+    "package_version",
+    &evidence.package_version,
+    &manifest.release_version,
+  )?;
+
+  require_evidence_exact(
+    "source.repository",
+    &evidence.source.repository,
+    SYSVAD_REPOSITORY,
+  )?;
+  require_evidence_exact("source.path", &evidence.source.path, SYSVAD_PATH)?;
+  require_evidence_exact("source.commit", &evidence.source.commit, SYSVAD_COMMIT)?;
+  require_evidence_exact("source.license", &evidence.source.license, SYSVAD_LICENSE)?;
+  require_evidence_exact(
+    "source.record_path",
+    &evidence.source.record_path,
+    SYSVAD_RECORD_PATH,
+  )?;
+  require_sha256(
+    "source.source_tree_sha256",
+    &evidence.source.source_tree_sha256,
+  )?;
+  require_sha256(
+    "source.imported_file_set_sha256",
+    &evidence.source.imported_file_set_sha256,
+  )?;
+  let mut patch_paths = BTreeSet::new();
+  for patch in &evidence.source.local_patches {
+    if !patch_paths.insert(patch.path.clone()) {
+      return Err(evidence_invalid(
+        "source.local_patches",
+        format!("duplicate local patch path {}", patch.path),
+      ));
+    }
+    require_sha256(
+      &format!("source.local_patches[{}].sha256", patch.path),
+      &patch.sha256,
+    )?;
+  }
+  let expected_patch_paths = LOCAL_PATCH_PATHS
+    .iter()
+    .map(|path| (*path).to_owned())
+    .collect::<BTreeSet<_>>();
+  if patch_paths != expected_patch_paths {
+    return Err(evidence_invalid(
+      "source.local_patches",
+      format!("expected {expected_patch_paths:?}, got {patch_paths:?}"),
+    ));
+  }
+
+  for (field, value) in [
+    ("build.windows", evidence.build.windows.as_str()),
+    ("build.visual_studio", evidence.build.visual_studio.as_str()),
+    (
+      "build.msbuild_version",
+      evidence.build.msbuild_version.as_str(),
+    ),
+    ("build.msvc_version", evidence.build.msvc_version.as_str()),
+    ("build.sdk_version", evidence.build.sdk_version.as_str()),
+    ("build.wdk_version", evidence.build.wdk_version.as_str()),
+    (
+      "build.inf2cat_version",
+      evidence.build.inf2cat_version.as_str(),
+    ),
+    (
+      "build.signtool_version",
+      evidence.build.signtool_version.as_str(),
+    ),
+    (
+      "build.canonicalization",
+      evidence.build.canonicalization.as_str(),
+    ),
+  ] {
+    require_evidence_non_empty(field, value)?;
+  }
+  require_evidence_exact(
+    "build.configuration",
+    &evidence.build.configuration,
+    "Release",
+  )?;
+  require_evidence_exact("build.platform", &evidence.build.platform, "x64")?;
+  if evidence.build.commands.is_empty() {
+    return Err(evidence_invalid(
+      "build.commands",
+      "at least one reproducible build command is required",
+    ));
+  }
+  validate_commands(&evidence.build.commands)?;
+  if evidence.verification.commands.is_empty() {
+    return Err(evidence_invalid(
+      "verification.commands",
+      "at least one read-only verification command is required",
+    ));
+  }
+  validate_commands(&evidence.verification.commands)?;
+
+  let mut expected_paths = BTreeSet::from([
+    MANIFEST_FILE_NAME.to_owned(),
+    manifest.files.runtime_executable.clone(),
+    manifest.files.driver_inf.clone(),
+    manifest.files.driver_binary.clone(),
+    manifest.files.driver_catalog.clone(),
+    PRODUCTION_DRIVER_NOTICE_PATH.to_owned(),
+  ]);
+  let mut file_records = BTreeMap::new();
+  for file in &evidence.files {
+    if !expected_paths.remove(&file.path) {
+      return Err(PackageEvidenceError::UnexpectedFileEvidence(file.path.clone()).into());
+    }
+    if file_records.insert(file.path.clone(), file).is_some() {
+      return Err(evidence_invalid(
+        "files",
+        format!("duplicate file record {}", file.path),
+      ));
+    }
+    require_sha256(&format!("files[{}].sha256", file.path), &file.sha256)?;
+    require_evidence_non_empty(format!("files[{}].kind", file.path), &file.kind)?;
+  }
+  if let Some(path) = expected_paths.into_iter().next() {
+    return Err(PackageEvidenceError::MissingFileEvidence(path).into());
+  }
+
+  let expected_kinds = [
+    (MANIFEST_FILE_NAME, "manifest"),
+    (manifest.files.runtime_executable.as_str(), "runtime"),
+    (manifest.files.driver_inf.as_str(), "driver-inf"),
+    (manifest.files.driver_binary.as_str(), "driver-sys"),
+    (manifest.files.driver_catalog.as_str(), "driver-cat"),
+    (PRODUCTION_DRIVER_NOTICE_PATH, "license-notice"),
+  ];
+  for (path, kind) in expected_kinds {
+    if file_records[path].kind != kind {
+      return Err(evidence_invalid(
+        format!("files[{path}].kind"),
+        format!("expected {kind}, got {}", file_records[path].kind),
+      ));
+    }
+    let full_path = root.join(safe_relative_path(path)?);
+    let (actual_hash, actual_size) = file_digest(&full_path)?;
+    let record = file_records[path];
+    if record.sha256 != actual_hash {
+      return Err(
+        PackageEvidenceError::FileHashMismatch {
+          path: path.to_owned(),
+          expected: record.sha256.clone(),
+          actual: actual_hash,
+        }
+        .into(),
+      );
+    }
+    if record.size_bytes != actual_size {
+      return Err(
+        PackageEvidenceError::FileSizeMismatch {
+          path: path.to_owned(),
+          expected: record.size_bytes,
+          actual: actual_size,
+        }
+        .into(),
+      );
+    }
+  }
+
+  require_evidence_exact(
+    "catalog.path",
+    &evidence.catalog.path,
+    &manifest.files.driver_catalog,
+  )?;
+  if !evidence.catalog.coverage_verified {
+    return Err(evidence_invalid(
+      "catalog.coverage_verified",
+      "catalog coverage must be verified",
+    ));
+  }
+  let expected_members = BTreeSet::from([
+    manifest.files.driver_inf.clone(),
+    manifest.files.driver_binary.clone(),
+  ]);
+  let actual_members = evidence
+    .catalog
+    .members
+    .keys()
+    .cloned()
+    .collect::<BTreeSet<_>>();
+  if actual_members != expected_members {
+    return Err(evidence_invalid(
+      "catalog.members",
+      format!("expected {expected_members:?}, got {actual_members:?}"),
+    ));
+  }
+  for member in expected_members {
+    let file_hash = &file_records[&member].sha256;
+    let catalog_hash = evidence.catalog.members.get(&member).ok_or_else(|| {
+      PackageEvidenceError::MissingFileEvidence(format!("catalog member {member}"))
+    })?;
+    if catalog_hash != file_hash {
+      return Err(
+        PackageEvidenceError::CatalogMemberMismatch {
+          path: member,
+          expected: file_hash.clone(),
+          actual: catalog_hash.clone(),
+        }
+        .into(),
+      );
+    }
+    require_sha256(&format!("catalog.members[{member}]"), catalog_hash)?;
+  }
+
+  let payload_records = [
+    file_records[manifest.files.driver_inf.as_str()],
+    file_records[manifest.files.driver_binary.as_str()],
+  ];
+  let actual_payload_digest = canonical_payload_digest(&payload_records);
+  if evidence.reproducibility.canonical_payload_sha256 != actual_payload_digest {
+    return Err(
+      PackageEvidenceError::DigestMismatch {
+        field: "reproducibility.canonical_payload_sha256".to_owned(),
+        expected: evidence.reproducibility.canonical_payload_sha256.clone(),
+        actual: actual_payload_digest,
+      }
+      .into(),
+    );
+  }
+  let actual_catalog_digest = catalog_member_digest(&evidence.catalog.members);
+  if evidence.reproducibility.catalog_member_set_sha256 != actual_catalog_digest {
+    return Err(
+      PackageEvidenceError::DigestMismatch {
+        field: "reproducibility.catalog_member_set_sha256".to_owned(),
+        expected: evidence.reproducibility.catalog_member_set_sha256.clone(),
+        actual: actual_catalog_digest,
+      }
+      .into(),
+    );
+  }
+  if !evidence.reproducibility.replay_verified {
+    return Err(evidence_invalid(
+      "reproducibility.replay_verified",
+      "clean replay must be verified",
+    ));
+  }
+  if !evidence.reproducibility.signature_bytes_excluded {
+    return Err(evidence_invalid(
+      "reproducibility.signature_bytes_excluded",
+      "detached signature bytes must be excluded from canonical payload comparison",
+    ));
+  }
+
+  for (field, value) in [
+    ("signing.route", evidence.signing.route.as_str()),
+    (
+      "signing.signer_subject",
+      evidence.signing.signer_subject.as_str(),
+    ),
+    (
+      "signing.signer_thumbprint",
+      evidence.signing.signer_thumbprint.as_str(),
+    ),
+    (
+      "signing.signature_timestamp",
+      evidence.signing.signature_timestamp.as_str(),
+    ),
+  ] {
+    require_evidence_non_empty(field, value)?;
+  }
+  require_evidence_exact(
+    "signing.route",
+    &evidence.signing.route,
+    "external-production-signing",
+  )?;
+  if evidence.signing.public_chain.is_empty() {
+    return Err(evidence_invalid(
+      "signing.public_chain",
+      "public signer chain metadata is required",
+    ));
+  }
+  for (index, certificate) in evidence.signing.public_chain.iter().enumerate() {
+    for (field, value) in [
+      (
+        format!("signing.public_chain[{index}].subject"),
+        certificate.subject.as_str(),
+      ),
+      (
+        format!("signing.public_chain[{index}].issuer"),
+        certificate.issuer.as_str(),
+      ),
+      (
+        format!("signing.public_chain[{index}].thumbprint"),
+        certificate.thumbprint.as_str(),
+      ),
+    ] {
+      require_evidence_non_empty(&field, value)?;
+    }
+    require_sha256(
+      &format!("signing.public_chain[{index}].sha256"),
+      &certificate.sha256,
+    )?;
+  }
+  for (field, value) in [
+    (
+      "signing.cat_signature_verified",
+      evidence.signing.cat_signature_verified,
+    ),
+    (
+      "signing.inf_catalog_coverage_verified",
+      evidence.signing.inf_catalog_coverage_verified,
+    ),
+    (
+      "signing.sys_catalog_coverage_verified",
+      evidence.signing.sys_catalog_coverage_verified,
+    ),
+    (
+      "signing.test_signing_required",
+      evidence.signing.test_signing_required,
+    ),
+  ] {
+    if field == "signing.test_signing_required" {
+      if value {
+        return Err(evidence_invalid(
+          field,
+          "production package cannot require TESTSIGNING",
+        ));
+      }
+    } else if !value {
+      return Err(evidence_invalid(field, "production trust check must pass"));
+    }
+  }
+  if evidence.signing.sys_embedded_signature_required
+    && !evidence.signing.sys_embedded_signature_verified
+  {
+    return Err(evidence_invalid(
+      "signing.sys_embedded_signature_verified",
+      "required embedded SYS signature must pass",
+    ));
+  }
+  require_evidence_exact(
+    "signing.signer_subject",
+    &evidence.signing.signer_subject,
+    &manifest.trust.signer_subject,
+  )?;
+  require_evidence_exact(
+    "signing.signer_thumbprint",
+    &evidence.signing.signer_thumbprint,
+    &manifest.trust.signer_thumbprint,
+  )?;
+  if !evidence.verification.verified
+    || !evidence.verification.replay_verified
+    || !evidence.verification.read_only
+  {
+    return Err(evidence_invalid(
+      "verification",
+      "package verification must pass, include replay evidence, and remain read-only",
+    ));
+  }
+  require_evidence_non_empty("verification.tool", &evidence.verification.tool)?;
+  if evidence.privacy.private_signing_material_present
+    || evidence.privacy.audio_content_present
+    || evidence.privacy.artifacts_content_present
+    || evidence.privacy.machine_secret_material_present
+  {
+    return Err(evidence_invalid(
+      "privacy",
+      "private signing, audio, artifacts, and machine-secret content must be absent",
+    ));
+  }
+  Ok(())
+}
+
+fn evidence_invalid(field: impl Into<String>, message: impl Into<String>) -> ReleaseError {
+  ReleaseError::Evidence(PackageEvidenceError::InvalidValue {
+    field: field.into(),
+    message: message.into(),
+  })
+}
+
+fn require_evidence_exact(
+  field: impl Into<String>,
+  actual: &str,
+  expected: &str,
+) -> Result<(), ReleaseError> {
+  if actual == expected {
+    Ok(())
+  } else {
+    Err(evidence_invalid(
+      field,
+      format!("expected {expected}, got {actual}"),
+    ))
+  }
+}
+
+fn require_evidence_non_empty(field: impl Into<String>, value: &str) -> Result<(), ReleaseError> {
+  if value.trim().is_empty() {
+    Err(evidence_invalid(field, "value must not be empty"))
+  } else {
+    Ok(())
+  }
+}
+
+fn require_sha256(field: &str, value: &str) -> Result<(), ReleaseError> {
+  if value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+    Ok(())
+  } else {
+    Err(evidence_invalid(
+      field,
+      "value must be a 64-character SHA-256 digest",
+    ))
+  }
+}
+
+fn validate_commands(commands: &[String]) -> Result<(), ReleaseError> {
+  for command in commands {
+    let normalized = command.to_ascii_lowercase();
+    if [
+      "pnputil",
+      "devcon",
+      "bcdedit",
+      "certutil",
+      "restart-computer",
+      "stop-computer",
+      "shutdown.exe",
+      "logoff.exe",
+      "-verb runas",
+    ]
+    .iter()
+    .any(|forbidden| normalized.contains(forbidden))
+    {
+      return Err(PackageEvidenceError::ForbiddenCommand(command.clone()).into());
+    }
+  }
+  Ok(())
+}
+
+fn file_digest(path: &Path) -> Result<(String, u64), ReleaseError> {
+  let bytes = fs::read(path).map_err(|error| ReleaseError::Io {
+    path: path.to_path_buf(),
+    message: error.to_string(),
+  })?;
+  let size = bytes.len() as u64;
+  Ok((sha256_bytes(&bytes), size))
+}
+
+fn sha256_bytes(bytes: &[u8]) -> String {
+  let digest = Sha256::digest(bytes);
+  let mut hexadecimal = String::with_capacity(digest.len() * 2);
+  for byte in digest {
+    write!(&mut hexadecimal, "{byte:02x}").expect("writing to a String cannot fail");
+  }
+  hexadecimal
+}
+
+fn canonical_payload_digest(records: &[&PackageFileEvidence]) -> String {
+  let mut records = records.to_vec();
+  records.sort_by(|left, right| left.path.cmp(&right.path));
+  let mut canonical = String::new();
+  for record in records {
+    writeln!(
+      &mut canonical,
+      "{}\0{}\0{}",
+      record.path,
+      record.sha256.to_ascii_lowercase(),
+      record.size_bytes
+    )
+    .expect("writing to a String cannot fail");
+  }
+  sha256_bytes(canonical.as_bytes())
+}
+
+fn catalog_member_digest(members: &BTreeMap<String, String>) -> String {
+  let mut canonical = String::new();
+  for (path, hash) in members {
+    writeln!(&mut canonical, "{}\0{}", path, hash.to_ascii_lowercase())
+      .expect("writing to a String cannot fail");
+  }
+  sha256_bytes(canonical.as_bytes())
+}
+
 fn parse_version_for_compatibility(
   field: &'static str,
   value: &str,
@@ -970,6 +1820,134 @@ mod tests {
     ))
   }
 
+  #[allow(
+    clippy::too_many_lines,
+    reason = "the synthetic evidence fixture mirrors the complete public schema for preflight tests"
+  )]
+  fn valid_evidence(manifest: &ReleaseManifest, root: &Path) -> PackageEvidence {
+    let file_specs = [
+      (MANIFEST_FILE_NAME, "manifest"),
+      (manifest.files.runtime_executable.as_str(), "runtime"),
+      (manifest.files.driver_inf.as_str(), "driver-inf"),
+      (manifest.files.driver_binary.as_str(), "driver-sys"),
+      (manifest.files.driver_catalog.as_str(), "driver-cat"),
+      (PRODUCTION_DRIVER_NOTICE_PATH, "license-notice"),
+    ];
+    let files = file_specs
+      .into_iter()
+      .map(|(path, kind)| {
+        let (sha256, size_bytes) = file_digest(&root.join(path)).expect("file digest");
+        PackageFileEvidence {
+          path: path.to_owned(),
+          kind: kind.to_owned(),
+          sha256,
+          size_bytes,
+        }
+      })
+      .collect::<Vec<_>>();
+    let file_records = files
+      .iter()
+      .map(|file| (file.path.clone(), file))
+      .collect::<BTreeMap<_, _>>();
+    let catalog = BTreeMap::from([
+      (
+        manifest.files.driver_inf.clone(),
+        file_records[&manifest.files.driver_inf].sha256.clone(),
+      ),
+      (
+        manifest.files.driver_binary.clone(),
+        file_records[&manifest.files.driver_binary].sha256.clone(),
+      ),
+    ]);
+    let payload_records = [
+      file_records[&manifest.files.driver_inf],
+      file_records[&manifest.files.driver_binary],
+    ];
+    let canonical_payload_sha256 = canonical_payload_digest(&payload_records);
+    let catalog_member_set_sha256 = catalog_member_digest(&catalog);
+
+    PackageEvidence {
+      schema_version: PACKAGE_EVIDENCE_SCHEMA_VERSION,
+      package_identifier: PRODUCT_IDENTIFIER.to_owned(),
+      package_version: manifest.release_version.clone(),
+      source: SourceProvenance {
+        repository: SYSVAD_REPOSITORY.to_owned(),
+        path: SYSVAD_PATH.to_owned(),
+        commit: SYSVAD_COMMIT.to_owned(),
+        license: SYSVAD_LICENSE.to_owned(),
+        record_path: SYSVAD_RECORD_PATH.to_owned(),
+        source_tree_sha256: "11".repeat(32),
+        imported_file_set_sha256: "22".repeat(32),
+        local_patches: LOCAL_PATCH_PATHS
+          .iter()
+          .map(|path| LocalPatchEvidence {
+            path: (*path).to_owned(),
+            sha256: "33".repeat(32),
+          })
+          .collect(),
+      },
+      build: BuildProvenance {
+        windows: "Windows 11 test build".to_owned(),
+        visual_studio: "Visual Studio test".to_owned(),
+        msbuild_version: "1.0.0".to_owned(),
+        msvc_version: "1.0.0".to_owned(),
+        sdk_version: "10.0.1".to_owned(),
+        wdk_version: "10.0.1".to_owned(),
+        inf2cat_version: "1.0.0".to_owned(),
+        signtool_version: "1.0.0".to_owned(),
+        configuration: "Release".to_owned(),
+        platform: "x64".to_owned(),
+        commands: vec!["build-production.ps1 --reproducible".to_owned()],
+        canonicalization: "MiniAEC package canonical v1".to_owned(),
+      },
+      files,
+      catalog: CatalogEvidence {
+        path: manifest.files.driver_catalog.clone(),
+        members: catalog.clone(),
+        coverage_verified: true,
+      },
+      reproducibility: ReproducibilityEvidence {
+        canonical_payload_sha256,
+        catalog_member_set_sha256,
+        replay_verified: true,
+        signature_bytes_excluded: true,
+      },
+      signing: SigningEvidence {
+        route: "external-production-signing".to_owned(),
+        signer_subject: manifest.trust.signer_subject.clone(),
+        signer_thumbprint: manifest.trust.signer_thumbprint.clone(),
+        public_chain: vec![CertificateEvidence {
+          subject: manifest.trust.signer_subject.clone(),
+          issuer: "CN=Test Public Root".to_owned(),
+          thumbprint: manifest.trust.signer_thumbprint.clone(),
+          sha256: "44".repeat(32),
+        }],
+        cat_signature_verified: true,
+        inf_catalog_coverage_verified: true,
+        sys_catalog_coverage_verified: true,
+        sys_embedded_signature_required: false,
+        sys_embedded_signature_verified: false,
+        test_signing_required: false,
+        signature_timestamp: "2026-08-21T00:00:00Z".to_owned(),
+      },
+      verification: VerificationEvidence {
+        verified: true,
+        replay_verified: true,
+        read_only: true,
+        tool: "synthetic package verifier".to_owned(),
+        commands: vec![
+          "signtool verify /kp /c MiniAECProduction.cat MiniAECProduction.sys".to_owned(),
+        ],
+      },
+      privacy: PrivacyEvidence {
+        private_signing_material_present: false,
+        audio_content_present: false,
+        artifacts_content_present: false,
+        machine_secret_material_present: false,
+      },
+    }
+  }
+
   fn write_package(manifest: &ReleaseManifest) -> PathBuf {
     let root = package_directory();
     fs::create_dir_all(root.join("runtime")).expect("create runtime directory");
@@ -981,8 +1959,21 @@ mod tests {
     )
     .expect("write manifest");
     for path in manifest.files.paths() {
-      fs::write(root.join(path), b"synthetic production artifact").expect("write package file");
+      if path != manifest.files.signing_evidence {
+        fs::write(root.join(path), b"synthetic production artifact").expect("write package file");
+      }
     }
+    fs::write(
+      root.join(PRODUCTION_DRIVER_NOTICE_PATH),
+      b"synthetic MS-PL notice",
+    )
+    .expect("write license notice");
+    let evidence = valid_evidence(manifest, &root);
+    fs::write(
+      root.join(&manifest.files.signing_evidence),
+      serde_json::to_vec_pretty(&evidence).expect("serialize evidence"),
+    )
+    .expect("write evidence");
     root
   }
 
@@ -1027,6 +2018,145 @@ mod tests {
     assert!(matches!(
       preflight_package(&root),
       Err(ReleaseError::PrivateSigningMaterial(_))
+    ));
+    fs::remove_dir_all(root).expect("remove test package");
+  }
+
+  #[test]
+  fn preflight_rejects_tampered_driver_payload() {
+    let manifest = valid_manifest();
+    let root = write_package(&manifest);
+    fs::write(
+      root.join(&manifest.files.driver_binary),
+      b"tampered payload",
+    )
+    .expect("tamper driver payload");
+    assert!(matches!(
+      preflight_package(&root),
+      Err(ReleaseError::Evidence(PackageEvidenceError::FileHashMismatch { path, .. }))
+        if path == manifest.files.driver_binary
+    ));
+    fs::remove_dir_all(root).expect("remove test package");
+  }
+
+  #[test]
+  fn preflight_rejects_catalog_member_mismatch() {
+    let manifest = valid_manifest();
+    let root = write_package(&manifest);
+    let evidence_path = root.join(&manifest.files.signing_evidence);
+    let mut evidence: PackageEvidence =
+      serde_json::from_str(&fs::read_to_string(&evidence_path).expect("read evidence"))
+        .expect("parse evidence");
+    evidence
+      .catalog
+      .members
+      .insert(manifest.files.driver_inf.clone(), "00".repeat(32));
+    fs::write(
+      evidence_path,
+      serde_json::to_vec_pretty(&evidence).expect("serialize evidence"),
+    )
+    .expect("write evidence");
+    assert!(matches!(
+      preflight_package(&root),
+      Err(ReleaseError::Evidence(PackageEvidenceError::CatalogMemberMismatch { path, .. }))
+        if path == manifest.files.driver_inf
+    ));
+    fs::remove_dir_all(root).expect("remove test package");
+  }
+
+  #[test]
+  fn preflight_rejects_invalid_catalog_trust() {
+    let manifest = valid_manifest();
+    let root = write_package(&manifest);
+    let evidence_path = root.join(&manifest.files.signing_evidence);
+    let mut evidence: PackageEvidence =
+      serde_json::from_str(&fs::read_to_string(&evidence_path).expect("read evidence"))
+        .expect("parse evidence");
+    evidence.signing.cat_signature_verified = false;
+    fs::write(
+      evidence_path,
+      serde_json::to_vec_pretty(&evidence).expect("serialize evidence"),
+    )
+    .expect("write evidence");
+    assert!(matches!(
+      preflight_package(&root),
+      Err(ReleaseError::Evidence(PackageEvidenceError::InvalidValue { field, .. }))
+        if field == "signing.cat_signature_verified"
+    ));
+    fs::remove_dir_all(root).expect("remove test package");
+  }
+
+  #[test]
+  fn preflight_rejects_source_and_build_input_drift() {
+    let manifest = valid_manifest();
+    let root = write_package(&manifest);
+    let evidence_path = root.join(&manifest.files.signing_evidence);
+    let mut evidence: PackageEvidence =
+      serde_json::from_str(&fs::read_to_string(&evidence_path).expect("read evidence"))
+        .expect("parse evidence");
+    evidence.source.commit = "changed-source".to_owned();
+    fs::write(
+      &evidence_path,
+      serde_json::to_vec_pretty(&evidence).expect("serialize source drift"),
+    )
+    .expect("write source drift");
+    assert!(matches!(
+      preflight_package(&root),
+      Err(ReleaseError::Evidence(PackageEvidenceError::InvalidValue { field, .. }))
+        if field == "source.commit"
+    ));
+
+    evidence.source.commit = SYSVAD_COMMIT.to_owned();
+    evidence.build.configuration = "Debug".to_owned();
+    fs::write(
+      &evidence_path,
+      serde_json::to_vec_pretty(&evidence).expect("serialize build drift"),
+    )
+    .expect("write build drift");
+    assert!(matches!(
+      preflight_package(&root),
+      Err(ReleaseError::Evidence(PackageEvidenceError::InvalidValue { field, .. }))
+        if field == "build.configuration"
+    ));
+    fs::remove_dir_all(root).expect("remove test package");
+  }
+
+  #[test]
+  fn preflight_accepts_variable_signature_metadata() {
+    let manifest = valid_manifest();
+    let root = write_package(&manifest);
+    let evidence_path = root.join(&manifest.files.signing_evidence);
+    let mut evidence: PackageEvidence =
+      serde_json::from_str(&fs::read_to_string(&evidence_path).expect("read evidence"))
+        .expect("parse evidence");
+    evidence.signing.signature_timestamp = "timestamp signer: CN=Other Public TSA".to_owned();
+    fs::write(
+      evidence_path,
+      serde_json::to_vec_pretty(&evidence).expect("serialize evidence"),
+    )
+    .expect("write evidence");
+    assert!(preflight_package(&root).is_ok());
+    fs::remove_dir_all(root).expect("remove test package");
+  }
+
+  #[test]
+  fn preflight_rejects_machine_changing_evidence_command() {
+    let manifest = valid_manifest();
+    let root = write_package(&manifest);
+    let evidence_path = root.join(&manifest.files.signing_evidence);
+    let mut evidence: PackageEvidence =
+      serde_json::from_str(&fs::read_to_string(&evidence_path).expect("read evidence"))
+        .expect("parse evidence");
+    evidence.verification.commands = vec!["pnputil /add-driver package.inf".to_owned()];
+    fs::write(
+      evidence_path,
+      serde_json::to_vec_pretty(&evidence).expect("serialize evidence"),
+    )
+    .expect("write evidence");
+    assert!(matches!(
+      preflight_package(&root),
+      Err(ReleaseError::Evidence(PackageEvidenceError::ForbiddenCommand(command)))
+        if command.contains("pnputil")
     ));
     fs::remove_dir_all(root).expect("remove test package");
   }
