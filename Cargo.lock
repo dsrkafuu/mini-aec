@@ -1926,6 +1926,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "mini-aec-release"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "semver",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "mini-aec-sender"
 version = "0.1.0"
 dependencies = [

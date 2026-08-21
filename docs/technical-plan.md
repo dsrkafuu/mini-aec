@@ -225,9 +225,12 @@ mini-aec/
 ### M5：安装与签名
 
 - `enable-normal-user-virtual-microphone-access` 的最小 Interactive Users runtime 权限、非提升端到端消费和完整 rollback 已完成批准的真机 acceptance；
+- 已定义 production release manifest、signed package layout、compatibility preflight、lifecycle state、inventory postcondition 和 metadata-only release evidence；这些仓库内模型不执行 Windows system mutation；
 - 协调应用与驱动安装、升级、回滚和卸载；
 - 区分开发测试签名与正式发布签名；
 - 完成主流会议软件兼容性矩阵。
+
+M5 的初始目标是可信的单用户 Windows 11 x64 桌面，继续使用现有非提升 Interactive Users transport，并明确记录本地交互进程可竞争 machine-wide sender slot 的限制；per-executable trust、multi-session arbitration 或 service broker 不在本 change 内。生产证书、正式 installer、真实安装/升级/回滚/卸载和会议软件矩阵仍需外部签名/系统授权与用户手动处理 restart boundary。
 
 ## 8. 验证原则
 
@@ -254,4 +257,4 @@ mini-aec/
 
 ## 10. SDD 状态
 
-仓库使用 OpenSpec 的 `spec-driven` schema 和 Codex 集成。M1、M2、M3、`enable-normal-user-virtual-microphone-access` 与 M4 `characterize-long-run-audio-stability` 均已完成、同步 capability 并归档，当前没有 active change。Normal-user access 的仓库内 ACL、busy 语义、非提升验证工具、批准的真机 acceptance 和完整 rollback 已完成；M4 的 30 分钟 K7/Realtek 稳定性 gate、operator observation、最终报告和完整 rollback 也已完成。任何后续 test-sign、install、device activation、uninstall 或 rollback 仍须另行批准，操作系统 restart 永远只由用户手动执行。
+仓库使用 OpenSpec 的 `spec-driven` schema 和 Codex 集成。M1、M2、M3、`enable-normal-user-virtual-microphone-access` 与 M4 `characterize-long-run-audio-stability` 均已完成、同步 capability 并归档，`production-driver-lifecycle` 为当前 active change。Normal-user access 的仓库内 ACL、busy 语义、非提升验证工具、批准的真机 acceptance 和完整 rollback 已完成；M4 的 30 分钟 K7/Realtek 稳定性 gate、operator observation、最终报告和完整 rollback 也已完成。任何后续 test-sign、install、device activation、uninstall 或 rollback 仍须另行批准，操作系统 restart 永远只由用户手动执行。
