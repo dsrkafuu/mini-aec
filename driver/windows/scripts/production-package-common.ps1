@@ -10,6 +10,8 @@ $script:ProductionEvidenceSchemaVersion = 1
 $script:ProductionLocalPatchPaths = @(
     'adapter.cpp',
     'EndpointsCommon/minwavertstream.cpp',
+    'TabletAudioSample/micintopo.cpp',
+    'TabletAudioSample/micintoptable.h',
     'TabletAudioSample/micinwavtable.h',
     'TabletAudioSample/minipairs.h',
     'TabletAudioSample/TabletAudioSample.vcxproj'

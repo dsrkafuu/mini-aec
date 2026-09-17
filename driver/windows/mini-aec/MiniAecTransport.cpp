@@ -27,6 +27,7 @@ struct MiniAecTransportState {
   ULONG RingCount;
   UCHAR CaptureFrame[MINIAEC_FRAME_BYTES];
   ULONG CaptureOffset;
+  ULONG CapturePeakMagnitude;
   ULONG HighWaterMark;
   ULONGLONG SessionOpens;
   ULONGLONG SessionCloses;
@@ -88,6 +89,7 @@ VOID ResetAudioLocked() {
   g_State.RingCount = 0;
   RtlZeroMemory(g_State.CaptureFrame, sizeof(g_State.CaptureFrame));
   g_State.CaptureOffset = MINIAEC_FRAME_BYTES;
+  g_State.CapturePeakMagnitude = 0;
 }
 
 VOID CloseSessionLocked() {
@@ -504,6 +506,15 @@ _IRQL_requires_max_(PASSIVE_LEVEL) VOID
   RestoreDispatch(DriverObject);
 }
 
+_IRQL_requires_max_(DISPATCH_LEVEL) ULONG
+    MiniAecTransportGetCapturePeakMagnitude(VOID) {
+  KIRQL oldIrql;
+  KeAcquireSpinLock(&g_State.Lock, &oldIrql);
+  const ULONG peakMagnitude = g_State.CapturePeakMagnitude;
+  KeReleaseSpinLock(&g_State.Lock, oldIrql);
+  return peakMagnitude;
+}
+
 _IRQL_requires_max_(DISPATCH_LEVEL) VOID
     MiniAecTransportReadCapture(_Out_writes_bytes_(ByteCount) PUCHAR Buffer,
                                 _In_ ULONG ByteCount) {
@@ -538,5 +549,21 @@ _IRQL_requires_max_(DISPATCH_LEVEL) VOID
     g_State.CaptureOffset += copyLength;
     destinationOffset += copyLength;
   }
+
+  ULONG peakMagnitude = 0;
+  for (ULONG sampleOffset = 0;
+       sampleOffset + sizeof(SHORT) <= ByteCount;
+       sampleOffset += sizeof(SHORT)) {
+    SHORT sample = 0;
+    RtlCopyMemory(&sample, Buffer + sampleOffset, sizeof(sample));
+    LONG sampleMagnitude = static_cast<LONG>(sample);
+    if (sampleMagnitude < 0) {
+      sampleMagnitude = -sampleMagnitude;
+    }
+    if (static_cast<ULONG>(sampleMagnitude) > peakMagnitude) {
+      peakMagnitude = static_cast<ULONG>(sampleMagnitude);
+    }
+  }
+  g_State.CapturePeakMagnitude = peakMagnitude;
   KeReleaseSpinLock(&g_State.Lock, oldIrql);
 }

@@ -5,22 +5,28 @@ $ErrorActionPreference = 'Stop'
 $scriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 $driverRoot = Split-Path -Parent $scriptRoot
 $securityPath = Join-Path $driverRoot 'mini-aec\MiniAecSecurity.h'
+$transportHeaderPath = Join-Path $driverRoot 'mini-aec\MiniAecTransport.h'
 $transportPath = Join-Path $driverRoot 'mini-aec\MiniAecTransport.cpp'
 $protocolPath = Join-Path $driverRoot 'mini-aec\MiniAecProtocol.h'
 $infPath = Join-Path $driverRoot 'mini-aec\MiniAECValidation.inx'
+$peakMeterTablePath = Join-Path $driverRoot 'vendor\sysvad\TabletAudioSample\micintoptable.h'
+$peakMeterHandlerPath = Join-Path $driverRoot 'vendor\sysvad\TabletAudioSample\micintopo.cpp'
 $runtimeValidationPath = Join-Path $scriptRoot 'runtime-access-validation.ps1'
 $longRunValidationPath = Join-Path $scriptRoot 'long-run-validation.ps1'
 
-foreach ($path in @($securityPath, $transportPath, $protocolPath, $infPath, $runtimeValidationPath, $longRunValidationPath)) {
+foreach ($path in @($securityPath, $transportHeaderPath, $transportPath, $protocolPath, $infPath, $peakMeterTablePath, $peakMeterHandlerPath, $runtimeValidationPath, $longRunValidationPath)) {
     if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
         throw "Required MiniAEC driver source is missing: $path"
     }
 }
 
 $securityText = Get-Content -LiteralPath $securityPath -Raw
+$transportHeaderText = Get-Content -LiteralPath $transportHeaderPath -Raw
 $transportText = Get-Content -LiteralPath $transportPath -Raw
 $protocolText = Get-Content -LiteralPath $protocolPath -Raw
 $infText = Get-Content -LiteralPath $infPath -Raw
+$peakMeterTableText = Get-Content -LiteralPath $peakMeterTablePath -Raw
+$peakMeterHandlerText = Get-Content -LiteralPath $peakMeterHandlerPath -Raw
 $runtimeValidationText = Get-Content -LiteralPath $runtimeValidationPath -Raw
 $longRunValidationText = Get-Content -LiteralPath $longRunValidationPath -Raw
 
@@ -49,6 +55,22 @@ if ($transportText -notmatch '(?s)NTSTATUS ReleaseOwner.*?CloseSessionLocked\(\)
 }
 if ($transportText -notmatch '(?s)MiniAecTransportShutdown.*?CloseSessionLocked\(\);.*?g_State\.OwnerFile\s*=\s*nullptr') {
     throw 'MiniAEC shutdown does not clear session audio and release the owner.'
+}
+if ($transportHeaderText -notmatch 'MiniAecTransportGetCapturePeakMagnitude') {
+    throw 'MiniAEC transport does not expose its capture peak magnitude to the endpoint meter.'
+}
+if ($transportText -notmatch '\bULONG\s+CapturePeakMagnitude\s*;' -or
+    $transportText -notmatch '(?s)VOID ResetAudioLocked\(\)\s*\{.*?g_State\.CapturePeakMagnitude\s*=\s*0;') {
+    throw 'MiniAEC capture peak state is missing or is not cleared when transport audio resets.'
+}
+if ($transportText -notmatch '(?s)MiniAecTransportReadCapture\s*\(.*?for\s*\(ULONG sampleOffset\s*=.*?RtlCopyMemory\(&sample,\s*Buffer\s*\+\s*sampleOffset,\s*sizeof\(sample\)\).*?g_State\.CapturePeakMagnitude\s*=\s*peakMagnitude;') {
+    throw 'MiniAEC capture peak is not measured from the PCM bytes returned to WaveRT.'
+}
+if ($peakMeterTableText -notmatch '(?s)KSPROPERTY_AUDIO_PEAKMETER2\s*,\s*KSPROPERTY_TYPE_GET\s*\|\s*KSPROPERTY_TYPE_BASICSUPPORT\s*,\s*PropertyHandler_MiniAecPeakMeter') {
+    throw 'MiniAEC topology peak-meter property is not routed through the live PCM meter handler.'
+}
+if ($peakMeterHandlerText -notmatch '(?s)PropertyHandler_MiniAecPeakMeter\s*\(.*?PropertyHandler_BasicSupportPeakMeter2\s*\(\s*PropertyRequest\s*,\s*MINIAEC_CHANNELS\s*\).*?ValidatePropertyParams\s*\(\s*PropertyRequest\s*,\s*sizeof\(LONG\)\s*,\s*sizeof\(ULONG\)\s*\).*?MiniAecTransportGetCapturePeakMagnitude\s*\(\s*\).*?PEAKMETER_NORMALIZE_IN_RANGE') {
+    throw 'MiniAEC topology meter does not validate requests and report the normalized transport peak.'
 }
 
 $protocolContracts = @(
@@ -97,4 +119,4 @@ foreach ($requiredLongRunContract in @('runtime-access-validation.ps1', "'-loop'
     }
 }
 
-Write-Host 'MiniAEC runtime access policy verified: protected SY/BA full control, IU read/write, explicit single-owner busy arbitration, fixed protocol and capture-only endpoint.'
+Write-Host 'MiniAEC runtime access policy verified: protected SY/BA full control, IU read/write, explicit single-owner busy arbitration, fixed protocol, capture-only endpoint, and live PCM peak-meter wiring.'

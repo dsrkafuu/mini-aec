@@ -14,6 +14,8 @@ $sourceRoot = Join-Path $checkout 'audio\sysvad'
 $allowedLocalPatches = @(
     'adapter.cpp',
     'EndpointsCommon/minwavertstream.cpp',
+    'TabletAudioSample/micintopo.cpp',
+    'TabletAudioSample/micintoptable.h',
     'TabletAudioSample/micinwavtable.h',
     'TabletAudioSample/minipairs.h',
     'TabletAudioSample/TabletAudioSample.vcxproj'

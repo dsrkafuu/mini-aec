@@ -19,9 +19,69 @@ Abstract:
 #include "mintopo.h"
 #include "micintopo.h"
 #include "micintoptable.h"
+#include "kshelper.h"
+#include "../../../mini-aec/MiniAecTransport.h"
 
 
 #pragma code_seg("PAGE")
+
+NTSTATUS
+PropertyHandler_MiniAecPeakMeter
+(
+    _In_ PPCPROPERTY_REQUEST PropertyRequest
+)
+{
+    PAGED_CODE();
+
+    ASSERT(PropertyRequest);
+    if (PropertyRequest == nullptr)
+    {
+        return STATUS_INVALID_PARAMETER;
+    }
+
+    if (PropertyRequest->Verb & KSPROPERTY_TYPE_BASICSUPPORT)
+    {
+        return PropertyHandler_BasicSupportPeakMeter2(
+            PropertyRequest,
+            MINIAEC_CHANNELS
+        );
+    }
+
+    NTSTATUS ntStatus = ValidatePropertyParams(
+        PropertyRequest,
+        sizeof(LONG),
+        sizeof(ULONG)
+    );
+    if (!NT_SUCCESS(ntStatus))
+    {
+        return ntStatus;
+    }
+
+    const ULONG channel = *(PULONG(PropertyRequest->Instance));
+    if (channel >= MINIAEC_CHANNELS && channel != ALL_CHANNELS_ID)
+    {
+        PropertyRequest->ValueSize = 0;
+        return STATUS_INVALID_PARAMETER;
+    }
+    if (!(PropertyRequest->Verb & KSPROPERTY_TYPE_GET))
+    {
+        PropertyRequest->ValueSize = 0;
+        return STATUS_INVALID_DEVICE_REQUEST;
+    }
+
+    const ULONG peakMagnitude = MiniAecTransportGetCapturePeakMagnitude();
+    const ULONGLONG maxPeakValue = static_cast<ULONGLONG>(
+        PEAKMETER_SIGNED_MAXIMUM - (PEAKMETER_STEPPING_DELTA / 2)
+    );
+    const ULONGLONG scaledPeakValue =
+        (static_cast<ULONGLONG>(peakMagnitude) * maxPeakValue + 16384ULL) /
+        32768ULL;
+    *(PLONG(PropertyRequest->Value)) = PEAKMETER_NORMALIZE_IN_RANGE(
+        static_cast<LONG>(scaledPeakValue)
+    );
+    PropertyRequest->ValueSize = sizeof(LONG);
+    return STATUS_SUCCESS;
+}
 
 //=============================================================================
 NTSTATUS

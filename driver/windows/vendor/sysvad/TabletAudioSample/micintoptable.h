@@ -21,6 +21,11 @@ PropertyHandler_MicInTopoFilter(
     _In_ PPCPROPERTY_REQUEST      PropertyRequest 
     );
 
+NTSTATUS
+PropertyHandler_MiniAecPeakMeter(
+    _In_ PPCPROPERTY_REQUEST PropertyRequest
+    );
+
 //
 // {d48deb08-fd1c-4d1e-b821-9064d49ae96e}
 DEFINE_GUID(MICIN_CUSTOM_NAME, 
@@ -153,7 +158,7 @@ PCPROPERTY_ITEM MicInPropertiesPeakMeter[] =
     &KSPROPSETID_Audio,
     KSPROPERTY_AUDIO_PEAKMETER2,
     KSPROPERTY_TYPE_GET | KSPROPERTY_TYPE_BASICSUPPORT,
-    PropertyHandler_Topology
+    PropertyHandler_MiniAecPeakMeter
   },
   {
     &KSPROPSETID_Audio,
