@@ -1,6 +1,6 @@
 # MiniAEC production driver lifecycle
 
-状态：`production-driver-lifecycle` 已定义生产发布合同，并实现纯 Rust manifest、包布局、兼容性、生命周期状态和 inventory 对比模型；生产证书、正式安装器、真实 Windows 安装/升级/回滚/卸载验收仍是外部前置条件，不由仓库测试或 agent 自动执行。
+状态：`production-driver-lifecycle` 已定义生产发布合同，并实现纯 Rust manifest、包布局、兼容性、可注入生命周期协调边界、状态和 inventory 对比模型；生产证书、具体 Windows backend、真实 Windows 安装/升级/回滚/卸载验收仍是外部前置条件，不由仓库测试或 agent 自动执行。
 
 ## Scope
 
@@ -50,10 +50,16 @@ package verifier 的通过结果是 metadata-only handoff；它不代表 endpoin
 
 ```text
 New -> Preflighted -> Authorized -> Staged -> Activated -> Verified
-                              └-> AwaitingUserRestart -> Activated
-Staged/Activated -> RecoveryRequired -> RolledBack
-Verified -> Uninstalled
+                              ├-> AwaitingUserRestart -> Staged
+                              └-> UninstallStaged -> Uninstalled
+Staged/Activated/UninstallStaged -> RecoveryRequired -> RolledBack
 ```
+
+`crates/mini-aec-release/src/lifecycle.rs` 中的 `LifecycleCoordinator` 负责把 package preflight、显式授权、staging、activation、postcondition verification、upgrade compatibility、rollback 和 uninstall 串成低频状态边界；`LifecycleBackend` 是真正 elevated installer 或 maintenance boundary 的唯一注入点。
+
+每次 backend mutation 前 coordinator 要求 backend 声明 elevated authority，并在 staging、activation、restart observation、uninstall 或 rollback 后读取 metadata-only inventory；candidate package 还会从 package root 重新执行只读 preflight，避免使用已变化的旧内存 evidence。
+
+inventory 包含 product/runtime/driver identity、public endpoint、producer interface、service/package identity、production trust signer、TESTSIGNING 状态、default-input roles、unrelated endpoints 和 active session identity；rollback/uninstall 目标会清空旧 session，避免旧 PCM 跨 release 复用。
 
 Installer or maintenance boundary 负责 package registration、driver/service changes、production trust prerequisites 和 removal；tray/runtime 只负责 ordinary-user start、stop、restart 和 PCM processing。任何 restart boundary 都必须报告 pending 状态并等待用户手动重启，不能由 agent、runtime 或脚本调用 restart、shutdown 或 sign-out。
 

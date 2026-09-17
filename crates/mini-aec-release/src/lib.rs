@@ -14,6 +14,13 @@ use semver::Version;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
+mod lifecycle;
+
+pub use lifecycle::{
+  ActivationOutcome, LifecycleBackend, LifecycleCoordinator, LifecycleError, LifecycleJournal,
+  LifecycleOperation, LifecyclePendingAction, LifecycleReleaseIdentity,
+};
+
 pub const RELEASE_MANIFEST_SCHEMA_VERSION: u16 = 1;
 pub const PACKAGE_EVIDENCE_SCHEMA_VERSION: u16 = 1;
 pub const INVENTORY_SCHEMA_VERSION: u16 = 1;
@@ -36,6 +43,8 @@ pub const PRODUCTION_DRIVER_INF_PATH: &str = "driver/MiniAECProduction.inf";
 pub const PRODUCTION_DRIVER_BINARY_PATH: &str = "driver/MiniAECProduction.sys";
 pub const PRODUCTION_DRIVER_CATALOG_PATH: &str = "driver/MiniAECProduction.cat";
 pub const PRODUCTION_DRIVER_NOTICE_PATH: &str = "trust/SysVAD-MS-PL.txt";
+pub const PRODUCTION_SERVICE_NAME: &str = "MiniAECProduction";
+pub const PRODUCTION_ENDPOINT_IDENTITY: &str = "Root\\MiniAECProduction";
 
 const PRIVATE_SIGNING_SUFFIXES: [&str; 5] = ["pfx", "p12", "pvk", "key", "snk"];
 const PRIVATE_AUDIO_SUFFIXES: [&str; 5] = ["wav", "flac", "mp3", "m4a", "pcm"];
@@ -582,6 +591,7 @@ pub enum LifecycleState {
   AwaitingUserRestart,
   Activated,
   Verified,
+  UninstallStaged,
   RecoveryRequired,
   RolledBack,
   Uninstalled,
@@ -594,9 +604,11 @@ pub enum LifecycleEvent {
   UserAuthorized,
   PackageStaged,
   RestartRequired,
+  UserRestartObserved,
   ActivationCompleted,
   VerificationPassed,
   OperationFailed,
+  UninstallRequested,
   RollbackVerified,
   UninstallVerified,
 }
@@ -639,13 +651,18 @@ impl LifecycleStateMachine {
       (LifecycleState::Staged, LifecycleEvent::RestartRequired) => {
         LifecycleState::AwaitingUserRestart
       }
-      (
-        LifecycleState::Staged | LifecycleState::AwaitingUserRestart,
-        LifecycleEvent::ActivationCompleted,
-      ) => LifecycleState::Activated,
-      (LifecycleState::Activated, LifecycleEvent::VerificationPassed) => LifecycleState::Verified,
-      (
+      (LifecycleState::AwaitingUserRestart, LifecycleEvent::UserRestartObserved) => {
         LifecycleState::Staged
+      }
+      (LifecycleState::Staged, LifecycleEvent::ActivationCompleted) => LifecycleState::Activated,
+      (LifecycleState::Activated, LifecycleEvent::VerificationPassed) => LifecycleState::Verified,
+      (LifecycleState::Authorized, LifecycleEvent::UninstallRequested) => {
+        LifecycleState::UninstallStaged
+      }
+      (
+        LifecycleState::Authorized
+        | LifecycleState::UninstallStaged
+        | LifecycleState::Staged
         | LifecycleState::AwaitingUserRestart
         | LifecycleState::Activated
         | LifecycleState::Verified,
@@ -654,7 +671,10 @@ impl LifecycleStateMachine {
       (LifecycleState::RecoveryRequired, LifecycleEvent::RollbackVerified) => {
         LifecycleState::RolledBack
       }
-      (LifecycleState::Verified, LifecycleEvent::UninstallVerified) => LifecycleState::Uninstalled,
+      (
+        LifecycleState::Verified | LifecycleState::UninstallStaged,
+        LifecycleEvent::UninstallVerified,
+      ) => LifecycleState::Uninstalled,
       _ => {
         return Err(TransitionError {
           state: self.state,
@@ -672,14 +692,31 @@ impl LifecycleStateMachine {
 pub struct LifecycleInventory {
   pub schema_version: u16,
   pub product_release: Option<String>,
+  #[serde(default)]
+  pub runtime_version: Option<String>,
+  #[serde(default)]
+  pub driver_version: Option<String>,
   pub public_endpoint_name: Option<String>,
   pub public_endpoint_identity: Option<String>,
   pub producer_interface_present: bool,
   pub services: BTreeSet<String>,
   pub driver_packages: BTreeSet<String>,
+  #[serde(default)]
+  pub trust: LifecycleTrustInventory,
   pub default_input_roles: BTreeMap<String, String>,
   pub active_session: bool,
+  #[serde(default)]
+  pub active_session_id: Option<String>,
   pub unrelated_audio_endpoints: BTreeSet<String>,
+}
+
+/// Read-only trust and code-integrity state captured around a lifecycle operation.
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct LifecycleTrustInventory {
+  pub production_signature_verified: bool,
+  pub signer_thumbprint: Option<String>,
+  pub test_signing_enabled: bool,
 }
 
 /// One observable mismatch between expected and observed lifecycle inventory.
@@ -722,6 +759,18 @@ impl LifecycleInventory {
     );
     compare_field(
       &mut differences,
+      "runtime_version",
+      &expected.runtime_version,
+      &self.runtime_version,
+    );
+    compare_field(
+      &mut differences,
+      "driver_version",
+      &expected.driver_version,
+      &self.driver_version,
+    );
+    compare_field(
+      &mut differences,
       "public_endpoint_name",
       &expected.public_endpoint_name,
       &self.public_endpoint_name,
@@ -750,6 +799,7 @@ impl LifecycleInventory {
       &expected.driver_packages,
       &self.driver_packages,
     );
+    compare_field(&mut differences, "trust", &expected.trust, &self.trust);
     compare_field(
       &mut differences,
       "default_input_roles",
@@ -761,6 +811,12 @@ impl LifecycleInventory {
       "active_session",
       &expected.active_session,
       &self.active_session,
+    );
+    compare_field(
+      &mut differences,
+      "active_session_id",
+      &expected.active_session_id,
+      &self.active_session_id,
     );
     compare_field(
       &mut differences,
@@ -2215,6 +2271,9 @@ mod tests {
       .expect("restart boundary");
     assert_eq!(machine.state(), LifecycleState::AwaitingUserRestart);
     let machine = machine
+      .apply(LifecycleEvent::UserRestartObserved)
+      .expect("user observed restart");
+    let machine = machine
       .apply(LifecycleEvent::ActivationCompleted)
       .expect("activation")
       .apply(LifecycleEvent::OperationFailed)
@@ -2255,5 +2314,332 @@ mod tests {
       .differences
       .iter()
       .any(|difference| difference.field == "default_input_roles"));
+  }
+
+  fn empty_inventory() -> LifecycleInventory {
+    LifecycleInventory {
+      schema_version: INVENTORY_SCHEMA_VERSION,
+      ..LifecycleInventory::default()
+    }
+  }
+
+  fn installed_inventory(manifest: &ReleaseManifest) -> LifecycleInventory {
+    let mut inventory = empty_inventory();
+    inventory.product_release = Some(manifest.release_version.clone());
+    inventory.runtime_version = Some(manifest.runtime.version.clone());
+    inventory.driver_version = Some(manifest.driver.version.clone());
+    inventory.public_endpoint_name = Some(PUBLIC_ENDPOINT_NAME.to_owned());
+    inventory.public_endpoint_identity = Some(PRODUCTION_ENDPOINT_IDENTITY.to_owned());
+    inventory.producer_interface_present = true;
+    inventory
+      .services
+      .insert(PRODUCTION_SERVICE_NAME.to_owned());
+    inventory
+      .driver_packages
+      .insert(PRODUCTION_DRIVER_IDENTITY.to_owned());
+    inventory.trust = LifecycleTrustInventory {
+      production_signature_verified: true,
+      signer_thumbprint: Some(manifest.trust.signer_thumbprint.clone()),
+      test_signing_enabled: false,
+    };
+    inventory
+  }
+
+  fn candidate_package(manifest: &ReleaseManifest) -> (PathBuf, PackagePreflight) {
+    let root = write_package(manifest);
+    let package = preflight_package(&root).expect("synthetic production package preflight");
+    (root, package)
+  }
+
+  struct FakeLifecycleBackend {
+    elevated: bool,
+    inventory: LifecycleInventory,
+    rollback_inventory: LifecycleInventory,
+    activation_outcome: ActivationOutcome,
+    activation_failure: bool,
+    omit_endpoint: bool,
+    stage_calls: usize,
+    activation_calls: usize,
+    uninstall_calls: usize,
+    rollback_calls: usize,
+  }
+
+  impl FakeLifecycleBackend {
+    fn new(inventory: LifecycleInventory) -> Self {
+      Self {
+        rollback_inventory: inventory.clone(),
+        inventory,
+        elevated: true,
+        activation_outcome: ActivationOutcome::Activated,
+        activation_failure: false,
+        omit_endpoint: false,
+        stage_calls: 0,
+        activation_calls: 0,
+        uninstall_calls: 0,
+        rollback_calls: 0,
+      }
+    }
+  }
+
+  impl LifecycleBackend for FakeLifecycleBackend {
+    type Error = String;
+
+    fn has_elevated_authority(&self) -> bool {
+      self.elevated
+    }
+
+    fn capture_inventory(&mut self) -> Result<LifecycleInventory, Self::Error> {
+      Ok(self.inventory.clone())
+    }
+
+    fn stage_package(&mut self, _package: &PackagePreflight) -> Result<(), Self::Error> {
+      self.stage_calls += 1;
+      Ok(())
+    }
+
+    fn stage_uninstall(&mut self, _installed: &ReleaseManifest) -> Result<(), Self::Error> {
+      self.stage_calls += 1;
+      Ok(())
+    }
+
+    fn activate_package(
+      &mut self,
+      package: &PackagePreflight,
+    ) -> Result<ActivationOutcome, Self::Error> {
+      self.activation_calls += 1;
+      if self.activation_failure {
+        return Err(String::from("synthetic activation failure"));
+      }
+      let default_input_roles = self.inventory.default_input_roles.clone();
+      let unrelated_audio_endpoints = self.inventory.unrelated_audio_endpoints.clone();
+      self.inventory = installed_inventory(&package.manifest);
+      self.inventory.default_input_roles = default_input_roles;
+      self.inventory.unrelated_audio_endpoints = unrelated_audio_endpoints;
+      if self.omit_endpoint {
+        self.inventory.public_endpoint_name = None;
+      }
+      Ok(self.activation_outcome)
+    }
+
+    fn rollback(
+      &mut self,
+      _prior_release: Option<&LifecycleReleaseIdentity>,
+    ) -> Result<(), Self::Error> {
+      self.rollback_calls += 1;
+      self.inventory = self.rollback_inventory.clone();
+      Ok(())
+    }
+
+    fn uninstall(&mut self) -> Result<(), Self::Error> {
+      self.uninstall_calls += 1;
+      self.inventory.product_release = None;
+      self.inventory.runtime_version = None;
+      self.inventory.driver_version = None;
+      self.inventory.public_endpoint_name = None;
+      self.inventory.public_endpoint_identity = None;
+      self.inventory.producer_interface_present = false;
+      self.inventory.services.remove(PRODUCTION_SERVICE_NAME);
+      self
+        .inventory
+        .driver_packages
+        .remove(PRODUCTION_DRIVER_IDENTITY);
+      self.inventory.trust = LifecycleTrustInventory::default();
+      self.inventory.active_session = false;
+      self.inventory.active_session_id = None;
+      Ok(())
+    }
+  }
+
+  #[test]
+  fn lifecycle_coordinator_installs_and_verifies_outside_realtime_workers() {
+    let manifest = valid_manifest();
+    let (root, package) = candidate_package(&manifest);
+    let before = empty_inventory();
+    let mut backend = FakeLifecycleBackend::new(before.clone());
+    let mut coordinator =
+      LifecycleCoordinator::prepare_install(&package, before).expect("prepare install");
+
+    coordinator.authorize().expect("authorize");
+    coordinator
+      .stage(&mut backend, Some(&package))
+      .expect("stage package");
+    assert_eq!(coordinator.state(), LifecycleState::Staged);
+    assert_eq!(
+      coordinator
+        .activate(&mut backend, &package)
+        .expect("activate package"),
+      ActivationOutcome::Activated
+    );
+    coordinator
+      .verify_activation(&mut backend)
+      .expect("verify activation");
+    assert_eq!(coordinator.state(), LifecycleState::Verified);
+    assert_eq!(backend.stage_calls, 1);
+    assert_eq!(backend.activation_calls, 1);
+    assert!(coordinator.journal().last_observed.is_some());
+    fs::remove_dir_all(root).expect("remove synthetic package");
+  }
+
+  #[test]
+  fn lifecycle_requires_elevated_backend_before_staging() {
+    let manifest = valid_manifest();
+    let (root, package) = candidate_package(&manifest);
+    let mut backend = FakeLifecycleBackend::new(empty_inventory());
+    backend.elevated = false;
+    let mut coordinator =
+      LifecycleCoordinator::prepare_install(&package, empty_inventory()).expect("prepare install");
+    coordinator.authorize().expect("authorize");
+    assert_eq!(
+      coordinator.stage(&mut backend, Some(&package)),
+      Err(LifecycleError::ElevatedAuthorityRequired)
+    );
+    assert_eq!(coordinator.state(), LifecycleState::Authorized);
+    assert_eq!(backend.stage_calls, 0);
+    fs::remove_dir_all(root).expect("remove synthetic package");
+  }
+
+  #[test]
+  fn lifecycle_rejects_incompatible_upgrade_before_backend_mutation() {
+    let installed = valid_manifest();
+    let mut candidate = valid_manifest();
+    candidate.release_version = "0.2.0".to_owned();
+    candidate.runtime.version = "0.2.0".to_owned();
+    candidate.driver.version = "0.2.0".to_owned();
+    candidate.compatibility.runtime_minimum = "0.2.0".to_owned();
+    candidate.compatibility.runtime_maximum = Some("0.3.0".to_owned());
+    candidate.compatibility.driver_minimum = "0.2.0".to_owned();
+    candidate.compatibility.driver_maximum = Some("0.3.0".to_owned());
+    let (root, package) = candidate_package(&candidate);
+    let backend = FakeLifecycleBackend::new(installed_inventory(&installed));
+    let error =
+      LifecycleCoordinator::prepare_upgrade(&package, &installed, installed_inventory(&installed))
+        .expect_err("incompatible upgrade must stop before staging");
+    assert_eq!(
+      error,
+      LifecycleError::Compatibility(CompatibilityError::InstalledReleaseOutsideCandidateRange)
+    );
+    assert_eq!(backend.stage_calls, 0);
+    fs::remove_dir_all(root).expect("remove synthetic package");
+  }
+
+  #[test]
+  fn lifecycle_requires_explicit_user_restart_observation() {
+    let manifest = valid_manifest();
+    let (root, package) = candidate_package(&manifest);
+    let mut backend = FakeLifecycleBackend::new(empty_inventory());
+    backend.activation_outcome = ActivationOutcome::AwaitingUserRestart;
+    let mut coordinator =
+      LifecycleCoordinator::prepare_install(&package, empty_inventory()).expect("prepare install");
+    coordinator.authorize().expect("authorize");
+    coordinator
+      .stage(&mut backend, Some(&package))
+      .expect("stage package");
+    assert_eq!(
+      coordinator
+        .activate(&mut backend, &package)
+        .expect("activation boundary"),
+      ActivationOutcome::AwaitingUserRestart
+    );
+    assert_eq!(coordinator.state(), LifecycleState::AwaitingUserRestart);
+    coordinator
+      .record_user_restart(backend.inventory.clone())
+      .expect("record manually observed restart");
+    assert_eq!(coordinator.state(), LifecycleState::Staged);
+    backend.activation_outcome = ActivationOutcome::Activated;
+    coordinator
+      .activate(&mut backend, &package)
+      .expect("continue activation");
+    coordinator
+      .verify_activation(&mut backend)
+      .expect("verify activation");
+    assert_eq!(coordinator.state(), LifecycleState::Verified);
+    fs::remove_dir_all(root).expect("remove synthetic package");
+  }
+
+  #[test]
+  fn lifecycle_records_failure_and_requires_verified_rollback() {
+    let manifest = valid_manifest();
+    let (root, package) = candidate_package(&manifest);
+    let before = empty_inventory();
+    let mut backend = FakeLifecycleBackend::new(before.clone());
+    backend.activation_failure = true;
+    let mut coordinator =
+      LifecycleCoordinator::prepare_install(&package, before.clone()).expect("prepare install");
+    coordinator.authorize().expect("authorize");
+    coordinator
+      .stage(&mut backend, Some(&package))
+      .expect("stage package");
+    assert!(matches!(
+      coordinator.activate(&mut backend, &package),
+      Err(LifecycleError::Backend {
+        action: "activate package",
+        ..
+      })
+    ));
+    assert_eq!(coordinator.state(), LifecycleState::RecoveryRequired);
+    backend.rollback_inventory = before.without_active_session();
+    coordinator
+      .rollback(&mut backend)
+      .expect("verified rollback");
+    assert_eq!(coordinator.state(), LifecycleState::RolledBack);
+    assert_eq!(backend.rollback_calls, 1);
+    fs::remove_dir_all(root).expect("remove synthetic package");
+  }
+
+  #[test]
+  fn lifecycle_uninstall_requires_clean_baseline_restoration() {
+    let manifest = valid_manifest();
+    let baseline = LifecycleInventory {
+      default_input_roles: BTreeMap::from([(
+        String::from("console"),
+        String::from("Physical Mic"),
+      )]),
+      unrelated_audio_endpoints: BTreeSet::from([String::from("Physical Mic")]),
+      ..empty_inventory()
+    };
+    let current = LifecycleInventory {
+      default_input_roles: baseline.default_input_roles.clone(),
+      unrelated_audio_endpoints: baseline.unrelated_audio_endpoints.clone(),
+      ..installed_inventory(&manifest)
+    };
+    let mut backend = FakeLifecycleBackend::new(current.clone());
+    let mut coordinator = LifecycleCoordinator::prepare_uninstall(&manifest, current, &baseline)
+      .expect("prepare uninstall");
+    coordinator.authorize().expect("authorize");
+    coordinator
+      .stage(&mut backend, None)
+      .expect("stage uninstall");
+    assert_eq!(coordinator.state(), LifecycleState::UninstallStaged);
+    coordinator
+      .uninstall(&mut backend)
+      .expect("verified uninstall");
+    assert_eq!(coordinator.state(), LifecycleState::Uninstalled);
+    assert_eq!(backend.uninstall_calls, 1);
+  }
+
+  #[test]
+  fn lifecycle_postcondition_failure_enters_recovery() {
+    let manifest = valid_manifest();
+    let (root, package) = candidate_package(&manifest);
+    let mut backend = FakeLifecycleBackend::new(empty_inventory());
+    backend.omit_endpoint = true;
+    let mut coordinator =
+      LifecycleCoordinator::prepare_install(&package, empty_inventory()).expect("prepare install");
+    coordinator.authorize().expect("authorize");
+    coordinator
+      .stage(&mut backend, Some(&package))
+      .expect("stage package");
+    coordinator
+      .activate(&mut backend, &package)
+      .expect("activate package");
+    assert!(matches!(
+      coordinator.verify_activation(&mut backend),
+      Err(LifecycleError::PostconditionMismatch {
+        operation: LifecycleOperation::Install,
+        ..
+      })
+    ));
+    assert_eq!(coordinator.state(), LifecycleState::RecoveryRequired);
+    fs::remove_dir_all(root).expect("remove synthetic package");
   }
 }

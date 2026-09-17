@@ -15,11 +15,11 @@
 
 ## 3. Production lifecycle implementation
 
-- [ ] 3.1 Implement the elevated lifecycle boundary for staged install, activation, post-activation verification, upgrade, rollback, and uninstall without moving PCM processing or UI work onto real-time audio workers.
-- [ ] 3.2 Implement before/after inventory capture for package, service, endpoint, default-input role, trust, and active-session state and make lifecycle success depend on verified postconditions.
-- [ ] 3.3 Implement compatible upgrade handling that activates only a matching runtime/driver pair and preserves the `MiniAEC Microphone` endpoint identity and fixed transport contract.
-- [ ] 3.4 Implement interrupted-operation recovery that records staged state, rejects unverified mixed releases, and exposes a documented rollback or user-recovery result.
-- [ ] 3.5 Implement uninstall and rollback checks for product endpoint absence, targeted package/service removal, stale-session isolation, unrelated endpoint preservation, and default-input role comparison.
+- [x] 3.1 Implement the elevated lifecycle boundary for staged install, activation, post-activation verification, upgrade, rollback, and uninstall without moving PCM processing or UI work onto real-time audio workers.
+- [x] 3.2 Implement before/after inventory capture for package, service, endpoint, default-input role, trust, and active-session state and make lifecycle success depend on verified postconditions.
+- [x] 3.3 Implement compatible upgrade handling that activates only a matching runtime/driver pair and preserves the `MiniAEC Microphone` endpoint identity and fixed transport contract.
+- [x] 3.4 Implement interrupted-operation recovery that records staged state, rejects unverified mixed releases, and exposes a documented rollback or user-recovery result.
+- [x] 3.5 Implement uninstall and rollback checks for product endpoint absence, targeted package/service removal, stale-session isolation, unrelated endpoint preservation, and default-input role comparison.
 - [x] 3.6 Preserve the ordinary-user runtime path, explicit producer ownership/busy behavior, session identity checks, and fresh-session PCM isolation while ensuring lifecycle operations do not require runtime elevation.
 - [x] 3.7 Ensure any operating-system restart requirement is represented as a pending user action and that no installer, runtime, script, or agent path initiates, schedules, or invokes restart, shutdown, or sign-out.
 

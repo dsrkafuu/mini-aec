@@ -228,8 +228,8 @@ Write-JsonDocument -Value $manifest -Path $manifestPath
 $commands = @(
     'verify-upstream.ps1 -CheckoutRoot .tools/sysvad-upstream',
     'preflight.ps1 -Json',
-    'MSBuild EndpointsCommon.vcxproj /t:Rebuild /p:Configuration=Release /p:Platform=x64 /p:MiniAecReproducible=true /p:MiniAecDriverDate=' + $DriverDate + ' /p:MiniAecDriverVersion=' + $DriverVersion + '.0 /p:SignMode=Off',
-    'MSBuild TabletAudioSample.vcxproj /t:Rebuild /p:Configuration=Release /p:Platform=x64 /p:MiniAecInf=MiniAECProduction.inx /p:TargetName=MiniAECProduction /p:MiniAecReproducible=true /p:MiniAecDriverDate=' + $DriverDate + ' /p:MiniAecDriverVersion=' + $DriverVersion + '.0 /p:SignMode=Off',
+    "MSBuild EndpointsCommon.vcxproj /t:Rebuild /p:Configuration=Release /p:Platform=x64 /p:MiniAecReproducible=true /p:MiniAecDriverDate=$DriverDate /p:MiniAecDriverVersion=$($DriverVersion).0 /p:SignMode=Off",
+    "MSBuild TabletAudioSample.vcxproj /t:Rebuild /p:Configuration=Release /p:Platform=x64 /p:MiniAecInf=MiniAECProduction.inx /p:TargetName=MiniAECProduction /p:MiniAecReproducible=true /p:MiniAecDriverDate=$DriverDate /p:MiniAecDriverVersion=$($DriverVersion).0 /p:SignMode=Off",
     'Inf2Cat /os:10_X64 /uselocaltime'
 )
 $build = New-BuildEvidence -Preflight $preflight -Commands $commands

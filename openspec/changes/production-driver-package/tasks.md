@@ -11,7 +11,7 @@
 - [x] 2.1 Add the production-only INF, hardware ID, service identity, catalog reference, and project configuration derived from the pinned SysVAD slice, exposing only `MiniAEC Microphone` capture and the private `MiniAECTransport` interface with no render category.
 - [x] 2.2 Implement a production x64 build entry point that runs the existing upstream verification and prerequisite preflight, selects a matching Windows SDK/WDK and x64 MSBuild environment, and writes only to a separate ignored production output tree.
 - [x] 2.3 Capture source-tree, imported-file, local-patch, toolchain, build-flag, and command provenance before producing the production INF/SYS payload, and fail before packaging when the pinned snapshot or declared prerequisites do not match.
-- [ ] 2.4 Assemble the release layout with the production manifest, runtime input, final INF/SYS payload, unsigned catalog input, public evidence location, license/notice metadata, and stable relative paths without copying private signing material or `artifacts/` content.
+- [x] 2.4 Assemble the release layout with the production manifest, runtime input, final INF/SYS payload, unsigned catalog input, public evidence location, license/notice metadata, and stable relative paths without copying private signing material or `artifacts/` content.
 - [x] 2.5 Generate the catalog from the final packaged INF and SYS bytes for the Windows 11 x64 target and record the catalog member set and hashes before any external signing step.
 
 ## 3. Formal signing and package verification
@@ -28,7 +28,7 @@
 - [x] 4.2 Add synthetic package verification tests for tampered INF/SYS content, catalog-member mismatch, invalid CAT trust, changed source/toolchain/build input, variable signature metadata, and a valid lifecycle-compatible evidence report.
 - [x] 4.3 Run two clean production payload builds or an equivalent independent replay and verify identical canonical INF/SYS digests, catalog coverage, source provenance, and declared build inputs before accepting reproducibility.
 - [ ] 4.4 Run the documented read-only package preflight against the signed candidate and record metadata-only results for manifest, provenance, endpoint scope, INF/SYS/CAT trust, compatibility, privacy, and development-separation checks.
-- [ ] 4.5 Run `cargo fmt --all -- --check`, `.tools\cargo-webrtc.cmd test --workspace`, and `.tools\cargo-webrtc.cmd clippy --workspace --all-targets -- -D warnings`, plus the clean x64 production package verification commands, without installing or restarting Windows.
+- [x] 4.5 Run `cargo fmt --all -- --check`, `.tools\cargo-webrtc.cmd test --workspace`, and `.tools\cargo-webrtc.cmd clippy --workspace --all-targets -- -D warnings`, plus the clean x64 production package verification commands, without installing or restarting Windows.
 
 ## 5. Lifecycle handoff and release readiness
 
