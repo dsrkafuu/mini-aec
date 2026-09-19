@@ -1,35 +1,31 @@
 schema: spec-driven
 
 context: |
-  Product: MiniAEC, a Windows 11 x64 hands-free acoustic echo canceller.
-  Stack: Rust workspace, windowless Tauri 2 system-tray host, WASAPI, WebRTC AEC3 M131, and a separately installed VB-CABLE output dependency.
-  Audio path: physical microphone plus physical render loopback into AEC, then processed PCM rendered to VB-CABLE CABLE Input and consumed from CABLE Output.
-  Scope: AEC only. Noise suppression, automatic gain control, equalization, dereverberation, and voice enhancement are downstream responsibilities.
-  Platform: Windows only. Product code is user-space Rust; MiniAEC does not ship or own a Windows audio driver.
-  UI: system tray and context menu only; no WebView or settings frontend.
-  AEC policy: keep the frozen FreeDesktop WebRTC M131 snapshot and upstream default AEC3 configuration until a measured blocker and explicit approval justify an experiment or upgrade.
-  Architecture: keep Tauri, the real-time engine, WASAPI, EchoCanceller, and audio output behind replaceable project-owned boundaries; VB-CABLE types stay inside the Windows output adapter.
-  Privacy: artifacts/ contains private local recordings and must never be staged, committed, uploaded, or deleted without an explicit request.
-  Required project context: read AGENTS.md, docs/technical-plan.md, docs/aec-baseline.md, vendor/UPSTREAM.md, and docs/upstream-upgrade-plan.md before audio or dependency changes.
-  Documentation style: do not hard-wrap prose to a fixed column width; keep each paragraph, list item, requirement description, scenario step, and task on one source line unless syntax requires otherwise.
-  Workflow: conventional commits; specifications and design before code; identical-input comparison for algorithm changes.
+  产品：MiniAEC，Windows 11 x64 免提声学回声消除器。
+  技术栈：Rust workspace、无窗口 Tauri 2 托盘、WASAPI、WebRTC AEC3 M131，以及用户单独安装的 VB-CABLE 输出依赖。
+  音频路径：物理麦克风和物理播放回环进入 AEC，处理后的 PCM 写入 VB-CABLE 的 CABLE Input，再由 CABLE Output 提供给普通客户端。
+  范围：只做 AEC；降噪、自动增益、均衡、去混响和语音增强由下游负责。
+  平台：仅 Windows；产品代码是用户态 Rust，不发布或拥有 Windows 音频驱动。
+  依赖材料：仓库可保留官方 VB-CABLE 安装包用于本地调试和构建后的手动安装，但 release 不包含该安装包，用户自行安装和管理。
+  界面：只有系统托盘和上下文菜单，不添加 WebView 或设置前端。
+  AEC 策略：冻结 FreeDesktop WebRTC M131 快照和上游 AEC3 默认配置，除非有已测量阻塞且获得明确批准。
+  架构：Tauri、实时引擎、WASAPI、EchoCanceller 和输出都保持项目自有可替换边界；VB-CABLE 类型只存在于 Windows 输出适配器。
+  隐私：artifacts/ 是私有本地录音目录，未经明确请求不得暂存、提交、上传或删除。
+  修改前上下文：先读 AGENTS.md、docs/technical-plan.md、docs/aec-baseline.md、vendor/UPSTREAM.md 和 docs/upstream-upgrade-plan.md。
+  工作流：使用简短 conventional commit；先规格和设计再改代码；算法变更必须使用相同输入比较。
 
 rules:
   proposal:
-    - State explicit goals and non-goals.
-    - Identify affected capabilities and external VB-CABLE dependency or distribution impact.
-    - Do not include implementation details that belong in design.md.
-    - Do not hard-wrap prose; keep each paragraph and list item on one source line.
+    - 明确目标和非目标。
+    - 说明受影响能力以及外部 VB-CABLE 依赖或分发影响。
+    - 不把属于 design.md 的实现细节写进 proposal。
   design:
-    - Preserve replaceable tray, engine, WASAPI, EchoCanceller, and virtual microphone boundaries.
-    - Record real-time, failure-recovery, external-dependency, security, migration, and rollback decisions where applicable.
-    - Do not hard-wrap prose; keep each paragraph and list item on one source line.
+    - 保留可替换的托盘、引擎、WASAPI、EchoCanceller 和输出边界。
+    - 按需记录实时、故障恢复、外部依赖、安全、迁移和回滚决策。
   specs:
-    - Write observable requirements with testable normal, failure, and recovery scenarios.
-    - Treat rendering to CABLE Input and ordinary-client consumption from CABLE Output as the product acceptance surface.
-    - Do not hard-wrap requirement descriptions or scenario steps; keep each semantic item on one source line.
+    - 写可观察、可测试的正常、失败和恢复需求。
+    - 把写入 CABLE Input、由普通客户端消费 CABLE Output 作为产品验收面。
   tasks:
-    - Keep documentation, implementation, and verification tasks distinct.
-    - Do not mark a task complete before its stated verification passes.
-    - Never include deletion, staging, or upload of artifacts/ recordings.
-    - Do not hard-wrap task text; keep each task on one source line.
+    - 区分文档、实现和验证任务。
+    - 声明的验证通过前不得勾选任务。
+    - 不得安排删除、暂存或上传 artifacts/ 录音。

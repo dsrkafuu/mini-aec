@@ -1,10 +1,6 @@
-# 长时音频稳定性规格
+# Spec Delta
 
-## Purpose
-
-定义 MiniAEC 通过 VB-CABLE 路径采集、分析和验收长时实时音频稳定性 metadata 的方法。
-
-## Requirements
+## MODIFIED Requirements
 
 ### Requirement: 单调的长时证据
 系统 SHALL 为实时 AEC run 写版本化 metadata-only 事件流，记录精确的物理麦克风、物理 render、VB-CABLE pair、请求时长、单调时间、生命周期、同步 epoch、device position/QPC、同步 delta、队列/丢弃、AEC、处理和输出计数，不记录 PCM 或会议内容。
@@ -20,36 +16,6 @@
 #### Scenario: 长时记录失败
 - **WHEN** 引擎在请求时长前进入 `Failed`
 - **THEN** 写入 failed event 和可操作错误，然后验证命令以失败退出
-
-### Requirement: 基于 QPC 的时钟分析
-系统 SHALL 在稳定同步 epoch 上分析 device-position/QPC，估计麦克风和 render 的有效帧率及 ppm 漂移，并排除非单调位置/QPC、timestamp error、discontinuity、epoch 变化和 render 活动不足的区间。
-
-#### Scenario: 观察数据充足
-- **WHEN** 两路在测量窗口内提供足够的有效 position/QPC 观察
-- **THEN** 报告两路有效帧率、相对 ppm、可用时长、覆盖率、同步 delta 趋势、方法和阈值
-
-#### Scenario: discontinuity 切分 run
-- **WHEN** 任一路报告 discontinuity、timestamp error 或同步 epoch 改变
-- **THEN** 关闭当前 clean segment，排除跨界区间，报告重置，不把两侧当作同一连续时钟
-
-#### Scenario: 证据不足
-- **WHEN** 缺少时间戳、render 不活动、存在缺口、顺序错误或 clean segment 太短
-- **THEN** 返回 `inconclusive` 和明确的数据质量原因，不报告零漂移或通过稳定性门禁
-
-### Requirement: 确定性的漂移结论
-系统 SHALL 按文档化规则，把可分析 run 分类为 `bounded-synchronizer-sufficient` 或 `clock-drift-compensation-required`；规则必须考虑相对速率方向、配对容差的累计相位误差、同步 delta、stale/silent-reference、队列行为和同步失败。
-
-#### Scenario: 现有同步器足够
-- **WHEN** clean window 没有会耗尽配对容差的持续漂移，且没有可归因于漂移的持续整帧维护、静音参考、队列压力或同步失败
-- **THEN** 返回 `bounded-synchronizer-sufficient` 和支持数据
-
-#### Scenario: 持续漂移需要补偿
-- **WHEN** clean window 显示同向漂移，其累计相位误差达到配对容差，或漂移造成重复维护、队列增长或终止同步失败
-- **THEN** 返回 `clock-drift-compensation-required`，指出证据，不修改运行中的同步器
-
-#### Scenario: 信号冲突
-- **WHEN** 时钟速率、同步 delta 和 counter 超出不确定度后仍相互矛盾
-- **THEN** 返回 `inconclusive` 并说明还需要什么数据，不选择有利结论
 
 ### Requirement: 30 分钟表征门禁
 项目 SHALL 为 K7 物理麦克风和当前活动的 Realtek 物理 render 提供独立的 30 分钟功能稳定性门禁和时钟漂移表征门禁；路径必须经过冻结的默认 AEC3、`CABLE Input`，且普通客户端持续消费 `CABLE Output`。
@@ -69,21 +35,6 @@
 #### Scenario: 功能稳定性失败
 - **WHEN** 提前终止或违反连续性、安全、有界性、输出或客户端条件
 - **THEN** 独立于漂移结论标记功能失败，并指出首个失败条件和计数
-
-### Requirement: 30 分钟验收与证据触发的复评
-项目 SHALL 把有结论的 30 分钟目标硬件结果作为本 change 的最终真实设备时长门禁，保留 metadata 日志/分析作为早期产品基线；若要延长时长或实现漂移补偿，必须有新证据和独立 change。
-
-#### Scenario: 30 分钟完成稳定性验收
-- **WHEN** 漂移为 `bounded-synchronizer-sufficient` 且功能稳定性通过
-- **THEN** 当前产品路径通过本 change 的长时门禁，不强制两小时运行
-
-#### Scenario: 30 分钟需要补偿
-- **WHEN** 漂移为 `clock-drift-compensation-required`
-- **THEN** 另一个 change 必须基于保留的基线证据设计、实现和验证补偿后，受影响路径才能接受
-
-#### Scenario: 早期日志触发复评
-- **WHEN** 早期版本 metadata 出现重复同步维护、队列压力增长、无法解释 discontinuity 或其他持续风险
-- **THEN** 由独立 change 定义延长验证或修复范围，不追溯施加固定两小时门禁
 
 ### Requirement: 私有且不改变系统的验证边界
 系统 SHALL 把事件、报告、endpoint 身份和私有录音放在被忽略的 `artifacts/`，分析 SHALL 不安装、更新、重启或移除驱动/设备，不改证书、启动配置或默认角色，不上传证据，也不发起系统重启。

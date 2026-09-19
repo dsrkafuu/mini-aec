@@ -1,76 +1,74 @@
-# MiniAEC agent guide
+# MiniAEC 开发指南
 
-## Required reading
+## 修改前必读
 
-Before changing audio capture, synchronization, AEC, dependencies, VB-CABLE output, or validation code, read:
+修改音频采集、同步、AEC、依赖、VB-CABLE 输出或验证代码前，先阅读：
 
 1. `docs/technical-plan.md`
 2. `docs/aec-baseline.md`
 3. `vendor/UPSTREAM.md`
 4. `docs/upstream-upgrade-plan.md`
-5. `openspec/config.yaml` and the applicable generated OpenSpec skill for SDD work
+5. `openspec/config.yaml` 与当前适用的 OpenSpec 技能文件
 
-## Product contract
+## 产品边界
 
-- The product name is `MiniAEC`; Rust/package identifiers use `mini-aec`.
-- The supported platform is Windows 11 x64.
-- Tauri 2 is a windowless Rust system-tray host. Do not add a WebView, React, TypeScript, Vite, Bun, or another settings frontend unless explicitly approved.
-- MiniAEC performs AEC only. Do not add noise suppression, automatic gain control, equalization, dereverberation, or voice enhancement to its signal path.
-- The supported output dependency is a separately installed VB-CABLE pair. MiniAEC writes processed audio to `CABLE Input`; recording and meeting applications consume `CABLE Output`.
-- MiniAEC does not bundle, redistribute, download, install, update, uninstall, license, or rename VB-CABLE.
-- MiniAEC does not own or ship a Windows audio driver, INF/SYS/CAT package, driver signer, or driver installer. User-space product code is Rust.
-- The tray shell alone is an engineering baseline, not a usable release.
+- 产品名为 `MiniAEC`，Rust 和 Cargo 标识使用 `mini-aec`。
+- 支持平台为 Windows 11 x64。
+- 应用是无窗口的 Tauri 2 Rust 托盘宿主，不添加 WebView、React、TypeScript、Vite、Bun 或设置前端，除非用户明确批准。
+- MiniAEC 只做声学回声消除，不在信号链中加入降噪、自动增益、均衡、去混响或语音增强。
+- 输出依赖是用户单独安装的 VB-CABLE：MiniAEC 写入 `CABLE Input`，录音和会议客户端读取 `CABLE Output`。
+- 仓库可保留用户提供的官方 VB-CABLE 安装包，用于本地调试或本地构建后的手动安装；安装包不进入 MiniAEC release。
+- MiniAEC 产品代码不自动下载、安装、更新、卸载、授权或改名 VB-CABLE，用户自行安装和管理。
+- MiniAEC 不拥有或发布 Windows 音频驱动、INF/SYS/CAT、驱动签名或驱动安装器；产品代码是用户态 Rust。
+- 托盘壳只能算工程基线，不等于可发布产品。
 
-## Current project state
+## 当前项目状态
 
-- The React/Bun/WebView scaffold has been removed.
-- The Tauri tray shell compiles and creates no application window.
-- Dual WASAPI capture and QPC-aligned offline AEC are retained in `mini-aec-lab`.
-- The active AEC baseline is FreeDesktop `webrtc-audio-processing 2.1`, based on WebRTC M131, through Rust `webrtc-audio-processing 2.1.0`.
-- The active configuration is the upstream AEC3 default. Previous suppression tuning profiles, blind comparison generation, and linear-output diagnostic bridge were removed during the product pivot. Their history is available in Git but they are not current directions.
-- Historical SysVAD validation remains in Git and archived OpenSpec changes only; it is not an active product or release path.
-- OpenSpec is initialized with the `spec-driven` schema and Codex integration. Use its generated workflow for future changes, but do not create a change unless the user asks to start or specify one.
+- React/Bun/WebView 脚手架已移除。
+- Tauri 托盘宿主可编译且不创建应用窗口。
+- `mini-aec-lab` 保留双 WASAPI 采集和基于 QPC 对齐的离线 AEC。
+- 当前 AEC 基线是 FreeDesktop `webrtc-audio-processing 2.1`，算法基于 WebRTC M131，Rust 依赖为 `webrtc-audio-processing 2.1.0`。
+- 当前配置使用上游 AEC3 默认值；旧的抑制调参、盲测和线性输出诊断实验已退出产品路线。
+- SysVAD 只保留在 Git 历史中，不是当前产品或发布路径。
 
-## AEC dependency rules
+## AEC 依赖规则
 
-- Treat the current M131 AEC3 snapshot as frozen until an upgrade task is explicitly approved.
-- Do not track or copy Google WebRTC `main` during ordinary feature work.
-- Do not update the Rust wrapper, FreeDesktop source snapshot, or vendored build layer without following `docs/upstream-upgrade-plan.md`.
-- Keep MiniAEC changes out of `webrtc/modules/audio_processing/aec3/` whenever possible. Record every local vendor patch in `vendor/UPSTREAM.md`.
-- Product code must depend on a replaceable project-owned `EchoCanceller` boundary. WebRTC-specific types stay inside its adapter.
-- Do not reintroduce product-facing AEC tuning profiles until the real-time `CABLE Output` path is stable and identical-input evidence establishes a specific default-baseline failure.
+- M131 快照保持冻结，除非用户明确批准升级变更。
+- 普通功能开发不得跟踪或复制 Google WebRTC `main`。
+- 不得直接升级 Rust wrapper、FreeDesktop 快照或 vendored 构建层；升级必须遵循 `docs/upstream-upgrade-plan.md`。
+- 尽量不要修改 `webrtc/modules/audio_processing/aec3/`；每个本地 vendor 修改都要记录到 `vendor/UPSTREAM.md`。
+- 产品代码必须依赖项目自有且可替换的 `EchoCanceller` 边界，WebRTC 类型只留在 adapter 内部。
+- 在实时 `CABLE Output` 路径稳定且有相同输入证据证明默认基线存在具体问题前，不重新引入产品级 AEC 调参 profile。
 
-## VB-CABLE rules
+## VB-CABLE 规则
 
-- Resolve exact Windows endpoint IDs, verify render/capture roles, and corroborate vendor identity; friendly names are diagnostic labels, not the sole identity key.
-- Reject `CABLE Output` as the physical microphone and `CABLE Input` as the physical render-loopback reference.
-- Never silently fall back to a Windows default endpoint, physical speakers, raw microphone output, or another virtual cable.
-- VB-CABLE installation, removal, licensing, and any requested Windows restart are manual user actions outside MiniAEC.
+- 解析精确 Windows endpoint ID，校验 render/capture 角色，并用设备元数据交叉确认厂商身份；友好名称只能用于诊断。
+- 拒绝把 `CABLE Output` 当物理麦克风，也拒绝把 `CABLE Input` 当物理 render-loopback 参考。
+- 不得静默回退到 Windows 默认端点、物理扬声器、原始麦克风或其他虚拟线缆。
+- VB-CABLE 的安装、移除、授权和系统重启都是用户在 MiniAEC 外部手动完成的操作。
 
-## System restart safety
+## 系统重启安全
 
-- Never initiate, schedule, or invoke an operating-system restart, shutdown, or sign-out command. If a workflow requires one, explain why and stop so the user can save their work and perform the action manually.
-- Prior approval for a broader validation, installation, rollback, or recovery plan does not authorize an agent-initiated restart, shutdown, or sign-out. Only the user performs these actions, even when they are required to continue the approved plan.
+- 禁止发起、计划或调用系统重启、关机或注销；需要时说明原因并停止，让用户保存工作后自行操作。
+- 用户此前对安装、回滚或验证的授权不包含代理发起重启；任何重启都只能由用户执行。
 
-## Validation and privacy
+## 验证与隐私
 
-- Algorithm changes require old/new processing of identical inputs. Compare far-end removal, convergence, double-talk voice preservation, runtime, and failure behavior; suppression alone is insufficient.
-- Validate the product path end-to-end by rendering to `CABLE Input` and consuming the paired `CABLE Output`, not only a WAV produced by the lab.
-- Third-party validation clients such as Windows Recorder, Discord, meeting software and other test applications are user-operated: the user manually launches, configures, starts, stops and closes them; the agent only runs MiniAEC commands and reads metadata, and must not launch or operate those clients.
-- Automated checks must not download, install, update, or remove VB-CABLE and must not mutate drivers, certificates, boot configuration, devices, or Windows default audio roles.
-- `artifacts/` contains private local recordings. Never stage, commit, upload, or delete it unless the user explicitly requests that exact action.
-- Commit only redistributable synthetic or public material under `testdata/`, with source and license recorded.
+- 算法变更必须用相同输入比较旧版和新版，至少比较远端回声、收敛、双讲语音保留、运行时间和失败行为；不能只比较抑制量。
+- 端到端验证必须是写入 `CABLE Input`、再由配对的 `CABLE Output` 消费，而不是只检查 WAV 文件。
+- Windows Recorder、Discord、会议软件和其他第三方测试客户端由用户手动启动、配置、开始、停止和关闭；代理只运行 MiniAEC 命令并读取元数据，不得启动或操作这些客户端。
+- 自动检查不得下载、安装、更新或移除 VB-CABLE，不得修改驱动、证书、启动配置、设备或 Windows 默认音频角色。
+- `artifacts/` 是私有本地录音和证据目录；除非用户明确请求删除，否则不得暂存、提交、上传或删除其中内容。
+- 只能提交 `testdata/` 下有来源和许可证记录的可再分发合成或公开素材。
 
-## Documentation style
+## 修改范围
 
-- Do not hard-wrap prose to a fixed column width. Keep each paragraph, list item, requirement description, scenario step, and task on one source line unless Markdown or YAML syntax requires a break.
-- Use line breaks only for semantic paragraph boundaries, headings, lists, tables, code blocks, and other structural markup.
-- This rule applies to project documentation and OpenSpec artifacts. Do not reformat generated OpenSpec skills or third-party vendored documentation.
+- 不改写生成的 OpenSpec 技能或第三方 vendored 文档。
 
-## Checks
+## 检查命令
 
-- Format: `cargo fmt --all -- --check`
-- Tests: `.tools\cargo-webrtc.cmd test --workspace`
-- Lints: `.tools\cargo-webrtc.cmd clippy --workspace --all-targets -- -D warnings`
-- The bundled WebRTC build requires an x64 Visual Studio C++ environment plus Meson, Ninja, and libclang; see `README.md`.
-- There are no frontend checks.
+- 格式：`cargo fmt --all -- --check`
+- 测试：`.tools\cargo-webrtc.cmd test --workspace`
+- Lint：`.tools\cargo-webrtc.cmd clippy --workspace --all-targets -- -D warnings`
+- Windows 构建需要 x64 Visual Studio C++、Meson、Ninja 和 libclang，详见 `README.md`。
+- 项目没有前端检查。

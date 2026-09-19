@@ -1,66 +1,44 @@
-# MiniAEC AEC baseline
+# MiniAEC AEC 基线
 
-## Active baseline
+## 当前基线
 
-MiniAEC has one active acoustic echo cancellation baseline:
+MiniAEC 只有一个有效的 AEC 基线：
 
-| Layer                      | Active value                                   |
-| -------------------------- | ---------------------------------------------- |
-| Rust API                   | `webrtc-audio-processing 2.1.0` from crates.io |
-| Native build               | vendored `webrtc-audio-processing-sys 2.1.0`   |
-| C++ distribution           | FreeDesktop `webrtc-audio-processing 2.1`      |
-| Google algorithm milestone | WebRTC M131                                    |
-| AEC mode                   | full echo canceller                            |
-| AEC3 parameters            | upstream defaults                              |
-| Noise suppression          | disabled                                       |
-| Gain control               | disabled                                       |
-| Product post-processing    | none                                           |
+| 层 | 固定值 |
+| --- | --- |
+| Rust API | `webrtc-audio-processing 2.1.0` |
+| Native 构建 | vendored `webrtc-audio-processing-sys 2.1.0` |
+| C++ 分发 | FreeDesktop `webrtc-audio-processing 2.1` |
+| 算法版本 | WebRTC M131 |
+| AEC | 完整 echo canceller，上游 AEC3 默认参数 |
+| NS / AGC / 后处理 | 全部关闭 |
 
-Both the offline lab path and real-time `DefaultEchoCanceller` adapter create the processor with `Processor::new(48_000)` and enable full echo cancellation through the stable high-level configuration. They do not enable `experimental-aec3-config`, expose a tuning profile, or export the linear pre-suppressor signal. The real-time adapter leaves stream delay unset, reuses adapter-owned channel buffers, submits render before capture, and rejects non-finite output behind the project-owned `EchoCanceller` boundary.
+离线工具和实时 `DefaultEchoCanceller` 都使用 `Processor::new(48_000)`。实时 adapter 先提交 render，再处理 capture；不设置 stream delay，不开放产品调参，不导出线性预抑制信号，并在 `EchoCanceller` 边界拒绝非有限输出。
 
-The exact source chain and Windows build adaptations are recorded in [`vendor/UPSTREAM.md`](../vendor/UPSTREAM.md).
+依赖来源和 Windows 构建适配见 [`vendor/UPSTREAM.md`](../vendor/UPSTREAM.md)。
 
-## What remains proven
+## 已确认的事实
 
-Earlier work established reusable engineering facts:
+- WASAPI 可以同时采集物理麦克风和物理播放回环。
+- 两路数据可以用首包 QPC 时间戳放到共同的 48 kHz 时间线。
+- M131 默认 AEC3 在 K7 麦克风和当前扬声器环境中可以收敛并消除可理解的远端回声。
+- 当前实时路径已经把处理结果写入 `CABLE Input`，由 `CABLE Output` 提供给普通客户端。
 
-- A physical microphone and physical render endpoint can be captured together through WASAPI.
-- The retained capture manifest contains first-packet QPC timestamps for both tracks.
-- The two tracks can be placed on a common 48 kHz timeline and processed as 10 ms frames.
-- The M131 default AEC3 path can converge and remove intelligible far-end video speech in the local K7 microphone and Sound Blaster X4 speaker setup.
+这些事实支持保留采集、对齐、报告和默认 AEC 代码，但不等于所有房间、设备或会议客户端都已通过质量验收。
 
-These facts justify retaining the capture, alignment, reporting, and default AEC processing code.
+## 已知限制和历史边界
 
-## Current product-path status
+冻结默认 AEC 的双讲仍可能吞掉部分近端语音；这属于已记录的算法质量限制，不是输出链路故障，也不在普通功能变更中调参。旧 SysVAD、`MiniAEC Microphone`、测试签名和驱动回滚只属于历史证据，当前产品不再依赖它们。
 
-The historical M1 `MiniAEC Microphone` transport and M2 real-time physical-microphone bypass were validated on an approved development-driver path. They remain evidence for the engine's bounded normalization, framing, queueing and stale-frame prevention, but the SysVAD endpoint is no longer an active product dependency.
+## 离线诊断
 
-The active M3 change implements two explicitly role-checked WASAPI inputs, capture-paced QPC pairing, the frozen default real-time adapter, `RunningAec`/`Degraded`/`Failed` behavior, metadata-only JSONL evidence, a headless `realtime-aec` command, and tray AEC/bypass control. Synthetic engine, adapter, CLI, and tray tests validate the repository behavior without installing a driver. A separately approved elevated run exercised the installed transport through Windows Recorder and Discord. Far-end removal remained effective at the tested louder playback level, near-end-only speech was natural, and render silence/recovery had no audible stale replay or discontinuity. Double-talk remained understandable but had obvious near-end swallowing, so the desired double-talk quality target did not pass; M3 records that frozen-default limitation while accepting the separately verified functional path. Final read-only inventory after the user-performed restart verified complete rollback of the validation device, endpoint, package, certificates, service, default roles and TESTSIGNING state.
-
-The implemented synchronization policy uses two eight-frame latest-wins queues, 5 ms pairing tolerance, a 100 ms maximum skew observation, 50 consecutive timestamp-bearing unpairable intervals before terminal synchronization failure, and ten healthy pairs before degraded recovery. An active render endpoint may legally provide no loopback packets while playback is silent; those intervals use counted silent references and remain visibly degraded without terminating or switching to bypass. Invalid AEC frames are silenced and the adapter is reconstructed; three consecutive processing failures terminate the run. This is bounded startup/recovery behavior, not long-run hardware-clock drift correction.
-
-## What was reset
-
-The old product context evaluated WAV files directly and led to experiments in near-end detector timing, suppression gain recovery, low/high-frequency near-end masking, blind A/B/C generation, and linear/full output comparison. Those experiments were useful for diagnosis, but their subjective ranking is not accepted as a product baseline after the signal chain changed to:
-
-```text
-physical microphone + physical render loopback
-  -> MiniAEC default AEC
-  -> CABLE Input -> CABLE Output
-  -> optional downstream noise suppression
-```
-
-All product-facing profiles and diagnostic-only wrapper extensions have been removed. Their exact code and listening history remain available in Git history. Active documentation must not route future work back to them.
-
-## Reproducing the offline baseline
-
-List devices:
+列出设备：
 
 ```powershell
 cargo run -p mini-aec-lab -- devices
 ```
 
-Capture a run:
+采集物理麦克风和播放回环：
 
 ```powershell
 cargo run -p mini-aec-lab -- capture `
@@ -69,57 +47,25 @@ cargo run -p mini-aec-lab -- capture `
   --render "Sound Blaster X4"
 ```
 
-Process it with AEC3 delay estimation:
+处理采集结果：
 
 ```powershell
 cargo run -p mini-aec-lab -- aec --run artifacts/runs/<run-id>
 ```
 
-The command writes:
+输出位于 `processed/aec-default-adaptive/`，包括对齐后的麦克风、render reference、AEC 输出和报告。离线 WAV 只用于诊断，不替代实时 `CABLE Input -> CABLE Output` 验收。可使用 `--stream-delay-ms 60` 做固定延迟对照，但不得把它当作产品调参。
 
-```text
-processed/aec-default-adaptive/
-├─ aligned-microphone.wav
-├─ aligned-render-reference.wav
-├─ aec-output.wav
-└─ aec-report.json
-```
+## 实时验收门槛
 
-The report schema is version 2 and records `webrtc-audio-processing 2.1 / WebRTC M131` with configuration `upstream-default`.
+实时默认基线必须同时满足：用户已从官方来源安装受支持的 VB-CABLE；MiniAEC 使用精确的 `CABLE Input`/`CABLE Output` ID；物理 render loopback 进入冻结的 AEC3；普通客户端持续读取 `CABLE Output`；并记录远端单讲、近端单讲、双讲、render 静音/恢复、停止/重启和长时运行。
 
-An explicit delay comparison remains available without changing AEC3 tuning:
-
-```powershell
-cargo run -p mini-aec-lab -- aec `
-  --run artifacts/runs/<run-id> `
-  --stream-delay-ms 60
-```
-
-## Real-time product validation gate
-
-Offline WAV output is now a diagnostic, not the final acceptance surface. The default baseline must be judged again only after the following are working:
-
-1. The user has separately installed a supported VB-CABLE pair from the official source.
-2. MiniAEC resolves exact `CABLE Input` and `CABLE Output` endpoint IDs without default-device fallback or feedback-producing source selection.
-3. The real-time engine supplies an explicitly selected physical render loopback to the frozen default AEC3 adapter and aligns it with microphone frames on a bounded QPC timeline.
-4. Windows Recorder and at least one meeting application consume the AEC output from `CABLE Output` while MiniAEC renders to `CABLE Input`.
-5. Far-end-only, near-end-only, double-talk, render silence/recovery, stop/restart and long-run output behavior are recorded without reinterpreting the historical algorithm result.
-
-The minimum acoustic matrix is:
-
-| Scenario | Primary check |
+| 场景 | 主要检查 |
 | --- | --- |
-| Far-end only | No intelligible returned video speech after convergence |
-| Near-end only | Natural voice, intact starts and endings, stable level |
-| Double-talk | Near-end remains understandable without obvious pumping or swallowing |
-| Render silence | No unnecessary coloration of the physical microphone |
-| Device restart | Bounded silence followed by clean recovery; no stale frames |
-| Long run | Stable delay and no growing drift, underruns, or periodic artifacts |
+| 远端单讲 | 收敛后不出现可理解的回声语音 |
+| 近端单讲 | 语音自然，字首字尾完整，电平稳定 |
+| 双讲 | 近端语音可理解，无明显吞音或泵动 |
+| Render 静音 | 不产生不必要的麦克风染色或旧音频 |
+| 设备重启 | 有界静音后干净恢复，不重复旧帧 |
+| 长时运行 | 延迟、队列、underrun 和时钟证据稳定 |
 
-Only after this end-to-end default baseline exposes a repeatable blocker may a new algorithm experiment be proposed. It must process identical inputs, change one mechanism, keep far-end removal as a gate, and evaluate near-end speech preservation before suppression metrics.
-
-## Next action
-
-Keep the frozen M131 default configuration for the completed M3 path. Double-talk near-end swallowing is a known quality limitation rather than unfinished M3 implementation; any future algorithm experiment requires a separate approved change, identical-input old/new evidence, and preservation of the demonstrated far-end removal.
-
-The metadata baseline collects timestamp delta, buffer depth, discontinuity, underrun and bounded processing evidence but does not claim asynchronous drift correction. Historical normal-user driver access and rollback evidence does not remove the need to validate the new VB-CABLE render clock and client path. Production driver installation and signing are no longer MiniAEC concerns.
+任何新的算法实验都必须先有可重复的默认基线问题，再用完全相同的输入只改变一个机制，并同时比较远端回声、收敛、近端语音、运行时间和失败行为。

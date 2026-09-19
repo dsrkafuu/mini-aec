@@ -1,10 +1,6 @@
-# 实时回声消除规格
+# Spec Delta
 
-## Purpose
-
-定义物理 render 回环采集、有界双输入同步、冻结的默认 AEC、安全降级、诊断和经 VB-CABLE 输出的端到端验收。
-
-## Requirements
+## MODIFIED Requirements
 
 ### Requirement: 明确的物理 render-loopback 参考
 系统 SHALL 要求每个 AEC run 使用精确且活动的物理 render endpoint，确实捕获该端点的 loopback，拒绝选定的 `CABLE Input`，不得跟随 Windows 默认 render 或替换其他端点。
@@ -20,44 +16,6 @@
 #### Scenario: 运行中的 render 改变
 - **WHEN** 物理 render 失效或 loopback 流失败
 - **THEN** 停止当前 run，清空未配对和处理 PCM，关闭 VB-CABLE 输出，并报告需要显式 restart 的 render 错误
-
-### Requirement: 有界 QPC 双输入同步
-系统 SHALL 使用 WASAPI QPC 和 device-position 元数据生成 10 ms 麦克风/render 时序，在有界的 48 kHz 时间线上配对，并可观测地限制等待、缓存、过期帧丢弃和静音参考。
-
-#### Scenario: 两路建立共同时间线
-- **WHEN** 麦克风和 render 在有限启动窗口内提供有效首包
-- **THEN** 选择共同起点，处理起点前帧，并只输出同一 discontinuity epoch 的有序配对
-
-#### Scenario: render 暂时缺失
-- **WHEN** 麦克风帧就绪但在有限容差内没有匹配 render
-- **THEN** 使用新静音参考，标记 AEC 降级，增加 underrun/silent-reference 计数，不阻塞麦克风节拍
-
-#### Scenario: render 帧过期
-- **WHEN** 队列中的 render 帧早于下一个可配对的麦克风帧
-- **THEN** 丢弃完整过期帧并增加 discard，不为重放旧帧增加延迟
-
-#### Scenario: 输入出现 discontinuity
-- **WHEN** 任一路在部分帧或队列期间报告 discontinuity 或 timestamp error
-- **THEN** 清空受影响的部分帧和未配对帧，建立新的同步 epoch，重置 AEC，不跨边界拼接
-
-#### Scenario: 持续 skew 超过边界
-- **WHEN** 有界恢复后两路仍无法在有限 skew 阈值内配对
-- **THEN** 以可操作的同步错误停止，不无限增长队列、持续丢整帧或宣称完成漂移校正
-
-### Requirement: 可替换的冻结默认 AEC
-系统 SHALL 通过项目自有 `EchoCanceller` 边界处理对齐帧；初始 adapter 使用 `webrtc-audio-processing 2.1.0`、FreeDesktop M131、完整 AEC 和上游默认 AEC3 参数，并关闭降噪、增益控制和产品后处理。
-
-#### Scenario: 处理对齐帧
-- **WHEN** AEC run 收到一个 render 帧和一个麦克风帧
-- **THEN** 先提交 render，再输出有限的处理后麦克风结果，并增加 AEC 计数
-
-#### Scenario: 创建 adapter
-- **WHEN** 新 AEC run 启动或批准的恢复流程重建 adapter
-- **THEN** 创建新的默认 M131 full-echo-canceller，不接受引擎、CLI 或托盘的产品调参
-
-#### Scenario: 选择显式 bypass
-- **WHEN** 操作者启动 bypass
-- **THEN** 不创建或调用 AEC adapter，并明确报告 `RunningBypass`
 
 ### Requirement: 安全的 AEC 降级和恢复
 系统 SHALL 区分健康 AEC、显式 bypass、临时 AEC 降级和终止失败；AEC 结果非法时提交新静音，不得因 render、同步或 AEC 失败而静默发送原始麦克风帧。

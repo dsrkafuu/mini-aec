@@ -1,10 +1,6 @@
-# 实时音频引擎规格
+# Spec Delta
 
-## Purpose
-
-定义独立、有界、可观测的实时引擎：它接收明确的物理输入角色，并通过选定的 VB-CABLE pair 输出新鲜的直通或 AEC PCM。
-
-## Requirements
+## MODIFIED Requirements
 
 ### Requirement: 独立的实时生命周期
 系统 SHALL 提供不依赖 CLI、WebView 或异步 UI 的 Tauri 独立实时引擎，支持一个物理麦克风 bypass run 或一个双输入 AEC run，并支持 start、stop 和显式 restart。
@@ -66,21 +62,6 @@
 #### Scenario: 输入报告 discontinuity
 - **WHEN** 输入在部分帧缓存期间报告 discontinuity 或 timestamp error
 - **THEN** 记录事件并清空部分帧，避免跨 discontinuity 拼帧
-
-### Requirement: 有界实时数据路径
-系统 SHALL 在采集到输出之间使用预分配的有界存储，最多保留四个完整未读帧，并且实时线程不得执行文件 I/O、控制台 I/O、无界排队或 UI runtime 等待。
-
-#### Scenario: 输出跟得上
-- **WHEN** 到达完整帧且队列少于四帧
-- **THEN** 保持顺序并提交，不产生引擎本地丢帧
-
-#### Scenario: 队列溢出
-- **WHEN** 到达完整帧且队列已有四帧
-- **THEN** 丢弃最旧未读帧，保留最新帧，并增加 overflow 和 discard 计数
-
-#### Scenario: 背压恢复
-- **WHEN** 输出在发生 overflow 后恢复消费
-- **THEN** 提交序列保持单调且无引擎协议缺口
 
 ### Requirement: 显式 bypass 输出
 在 `RunningBypass` 中，系统 SHALL 把归一化的物理麦克风帧直接送入一个 VB-CABLE output session，明确报告 bypass 状态，不调用 WebRTC AEC3，也不把 bypass 当作 AEC 故障回退。

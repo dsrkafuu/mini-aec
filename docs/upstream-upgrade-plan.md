@@ -1,96 +1,52 @@
-# WebRTC AEC upstream upgrade plan
+# WebRTC AEC 上游升级计划
 
-## Decision
+## 当前决策
 
-The current WebRTC M131 AEC3 implementation is a frozen product baseline, not a rolling dependency. MiniAEC monitors upstream development but upgrades only through a measured candidate process.
+WebRTC M131 AEC3 是冻结的产品基线，不是滚动依赖。Google WebRTC `main` 是 Chromium 开发分支，FreeDesktop 负责分发型源码和构建，Rust wrapper 的小版本也可能带来 API 变化，因此升级必须经过候选版本和相同输入回归。
 
-This separation is necessary because Google WebRTC `main` is a Chromium development branch, FreeDesktop maintains a distribution-oriented source extraction and build system, and the Rust wrapper warns that minor releases within the same major version may contain API-breaking changes.
+## 触发条件
 
-The project is currently preparing the M3 real-time default-AEC product path. M1 transport and M2 bypass validation do not establish an algorithm upgrade trigger, and M3 must use the frozen upstream-default M131 adapter so synchronization, lifecycle and product-path failures are not confounded with a dependency change.
+只有出现以下至少一项，才创建升级评估：
 
-## Upgrade triggers
+1. 当前基线出现可由上游修复的已测量问题，例如双讲吞音、非线性残余回声、延迟不稳定、回声路径恢复慢或时钟漂移失败。
+2. 稳定的 FreeDesktop 版本升级 WebRTC milestone 并带来相关 AEC3 改进。
+3. 匹配的 Rust wrapper 让目标源码可稳定构建和维护。
+4. 支持的 Windows/MSVC 工具链无法继续构建当前版本。
+5. 安全、正确性或许可证问题要求替换。
+6. Beta 或大版本发布计划明确安排依赖刷新。
 
-Open an upgrade evaluation when at least one condition applies:
+Google WebRTC `main` 上的新文件或神经网络实验只代表值得调查，不是自动升级理由。
 
-1. A measured failure in the current baseline has a specific upstream fix, such as double-talk voice loss, residual nonlinear echo, unstable delay, slow echo-path recovery, or clock-drift failure.
-2. A stable FreeDesktop release moves to a newer WebRTC milestone and exposes a relevant AEC3 improvement.
-3. A matching Rust wrapper release makes that source buildable and supportable.
-4. A supported Windows/MSVC toolchain can no longer build the pinned version.
-5. A security, correctness, or licensing issue requires replacement.
-6. The project is preparing a Beta or major release and schedules a dependency refresh.
+## 监控
 
-New files or experiments on Google WebRTC `main`, including neural residual echo estimation, are signals to investigate rather than automatic upgrade triggers.
+每一到两个月以及每次大版本发布前，做一次只读检查：Google AEC3/Chromium 记录、FreeDesktop 发布、Rust wrapper 发布与 issue，以及 MSVC/Meson/Ninja/bindgen/libclang 兼容性。只记录可行动结论，不改 vendor 树、不更新 `Cargo.lock`。
 
-## Monitoring cadence
+## 候选升级步骤
 
-Perform a lightweight read-only review every one or two months and before each major release:
+1. 从干净基线创建隔离分支。
+2. 记录 Google、FreeDesktop、Rust wrapper 的版本和精确提交，以及触发升级的上游修复。
+3. 导入稳定源码，不带构建产物和 Git 元数据。
+4. 按 `vendor/UPSTREAM.md` 逐项重放本地补丁，删除补丁时写明原因。
+5. 同步更新 pin、校验和、许可证、通知和 vendor 记录。
+6. 先完成构建、单元测试和 Clippy，再做声学比较。
+7. 基线和候选分别处理完全相同的输入，输出写入不同目录；WebRTC 类型继续留在 `EchoCanceller` adapter 内。
 
-- Google WebRTC AEC3 commit log and Chromium milestone notes.
-- FreeDesktop `webrtc-audio-processing` releases and Windows patches.
-- `tonarino/webrtc-audio-processing` releases, issues, and build changes.
-- MSVC, Meson, Ninja, bindgen, and libclang compatibility relevant to the bundled Windows build.
+## 必测回归
 
-Record only actionable findings. Routine monitoring must not rewrite the vendor tree or update `Cargo.lock`.
+| 场景 | 重点 |
+| --- | --- |
+| 仅远端 | 残余回声和收敛 |
+| 仅近端 | 语音自然度和音色变化 |
+| 双讲 | 吞音、泵动和语音保留 |
+| 回声路径变化 | 重置和恢复时间 |
+| 非线性路径 | 高音量和受控削波 |
+| 延迟变化 | 对齐稳定性 |
+| 长时运行 | 至少 30 分钟的时钟和队列稳定性 |
 
-## Candidate preparation
+同时记录回声抑制、收敛、语音质量、处理耗时、内存、延迟、丢帧、underrun、重置、非有限输出、崩溃和构建/打包失败。私有录音只放在被忽略的 `artifacts/`，可再分发素材必须放在有来源和许可证的 `testdata/`。
 
-1. Create an isolated candidate branch from a clean baseline.
-2. Record before editing:
-   - Google WebRTC milestone and exact commit.
-   - FreeDesktop version and exact commit.
-   - Rust wrapper version and exact commit/tag.
-   - Release notes or upstream fixes motivating the candidate.
-3. Import the stable source snapshot without carrying build outputs or Git metadata.
-4. Reapply every local patch listed in `vendor/UPSTREAM.md` individually.
-5. Remove obsolete patches and explain why; never silently drop one.
-6. Update `vendor/UPSTREAM.md`, Cargo pins, checksums, licenses, and notices in the same candidate commit.
-7. Compile and run unit tests before producing any acoustic comparison.
+## 接受条件
 
-Prefer keeping WebRTC-specific code behind the project-owned `EchoCanceller` adapter. Until side-by-side engines exist in one binary, run the baseline commit and candidate commit separately against byte-identical input tracks and use distinct output directories.
+候选版本必须同时满足：远端回声不回退并改善触发升级的问题；近端和双讲没有新的持续吞音、泵动、金属音或截断；延迟获取、回声路径恢复和长时漂移不差于基线；实时预算、Windows x64 构建、测试、Clippy、应用构建和打包全部通过；源码 pin、本地补丁、许可证和比较报告完整可复核。
 
-## Regression corpus
-
-Each candidate must process the same inputs as the frozen baseline:
-
-| Scenario | Required variation | Primary risk |
-| --- | --- | --- |
-| Far-end only | Low, normal, and high speaker level | Residual echo and convergence |
-| Near-end only | Quiet and normal local speech | Unwanted voice coloration |
-| Double-talk | Speech at startup, middle, and after convergence | Swallowed syllables and pumping |
-| Echo-path change | Move or rotate microphone/speaker during playback | Reset and recovery time |
-| Nonlinear path | High speaker level and controlled mic clipping | Residual distorted echo |
-| Delay change | Buffer/device disturbance where reproducible | Loss of alignment |
-| Long run | At least 30 minutes; longer evidence only when early-version diagnostics show a concrete risk | Clock drift and stability |
-
-Private room recordings stay under ignored `artifacts/`. Redistributable automated regression material belongs under `testdata/` only when its source and license are recorded. A high-quality double-talk corpus should include an isolated near-end reference when possible so voice preservation can be measured instead of judged only by output energy.
-
-## Measurements
-
-For both baseline and candidate record:
-
-- Active far-end echo reduction, ERL/ERLE, residual echo likelihood, delay estimate, and convergence time.
-- Near-end level and spectral change during near-end-only and double-talk regions.
-- Audible residual echo, pumping, metallic artifacts, clipped word starts or endings, and recovery after an echo-path change.
-- CPU time per 10 ms frame, P50/P95/P99 processing time, peak memory, and output latency.
-- Discontinuities, underruns, overruns, resets, non-finite output, crashes, and build/package failures.
-
-Objective suppression metrics do not override near-end speech quality. A candidate that removes more echo by damaging local speech fails.
-
-## Acceptance gates
-
-A candidate can replace the baseline only when all conditions pass:
-
-1. Far-end-only performance does not materially regress on any retained baseline and improves the scenario that motivated the upgrade.
-2. Double-talk and near-end-only listening show no new persistent swallowing, pumping, metallic artifacts, or clipped syllable endings.
-3. Delay acquisition, echo-path recovery, and long-run drift are no worse than the baseline.
-4. The real-time processing budget remains within the gates in `docs/technical-plan.md`.
-5. Windows x64 build, tests, strict Clippy, application build, and packaging all pass from documented prerequisites.
-6. Source pins, local patches, licenses, and comparison reports are complete and reviewable.
-
-Use approximately 1 dB as an investigation threshold for far-end ERLE changes, not as an automatic pass/fail rule. Room recordings vary, so repeated runs and listening remain required.
-
-## Rollout and rollback
-
-Land an accepted upgrade as its own bounded commit. Do not combine it with capture, synchronization, tray, virtual-driver, or audio-format changes. Preserve the prior pin and benchmark report in Git history and document the command needed to reproduce the comparison.
-
-During product rollout, keep the previous AEC adapter available until the new version passes extended real-world use. Any crash, non-finite output, severe double-talk regression, or repeatable loss of echo cancellation is a rollback condition.
+约 1 dB 只作为调查阈值，不是自动通过条件；房间录音必须重复运行并结合听感判断。升级应保持独立提交，保留旧 adapter 和回归报告，出现崩溃、非有限输出、严重双讲回退或回声消除失效时回滚。

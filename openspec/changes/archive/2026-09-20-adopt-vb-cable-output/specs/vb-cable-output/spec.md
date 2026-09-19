@@ -1,10 +1,10 @@
-# VB-CABLE 输出规格
+# Spec Delta
 
 ## Purpose
 
 定义 MiniAEC 如何把用户单独安装的 VB-CABLE pair 作为 Windows 外部音频桥，将处理后的 PCM 提供给普通录音和会议客户端。
 
-## Requirements
+## ADDED Requirements
 
 ### Requirement: 用户拥有的外部前置条件
 产品 SHALL 要求用户在 MiniAEC 外部获取、安装、更新、授权和移除 VB-CABLE，并指向 VB-Audio 官方来源；仓库可以保留官方安装包供本地调试或构建后的手动安装，但 release 不得包含该安装包，MiniAEC 产品代码不得自动下载、安装、更新、卸载、授权或改名 VB-CABLE。
