@@ -122,7 +122,7 @@ struct RealtimeAecArgs {
 
 #[derive(Debug, Args)]
 struct StabilityReportArgs {
-  /// Metadata-only engine.jsonl below artifacts/ or the historical driver/windows/out/ root.
+  /// Metadata-only engine.jsonl below the ignored artifacts/ root.
   #[arg(long)]
   events: PathBuf,
 

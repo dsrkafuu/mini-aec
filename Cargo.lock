@@ -1930,46 +1930,11 @@ name = "mini-aec-output"
 version = "0.1.0"
 
 [[package]]
-name = "mini-aec-release"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "clap",
- "semver",
- "serde",
- "serde_json",
- "sha2",
-]
-
-[[package]]
-name = "mini-aec-sender"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "clap",
- "mini-aec-transport",
- "mini-aec-windows-transport",
- "serde",
- "serde_json",
-]
-
-[[package]]
-name = "mini-aec-transport"
-version = "0.1.0"
-
-[[package]]
 name = "mini-aec-windows-output"
 version = "0.1.0"
 dependencies = [
  "mini-aec-output",
  "wasapi",
-]
-
-[[package]]
-name = "mini-aec-windows-transport"
-version = "0.1.0"
-dependencies = [
- "mini-aec-transport",
 ]
 
 [[package]]

@@ -3,7 +3,6 @@ logs/
 *.log
 /target
 artifacts/
-driver/windows/out/
 .tools/*
 !.tools/build-webrtc.cmd
 !.tools/cargo-webrtc.cmd

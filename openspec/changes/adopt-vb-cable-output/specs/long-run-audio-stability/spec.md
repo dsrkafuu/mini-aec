@@ -19,11 +19,15 @@ The system SHALL record a versioned metadata-only event stream for a configured 
 - **THEN** the event stream records a failed event and the actionable engine error before the validation command exits unsuccessfully
 
 ### Requirement: Thirty-minute characterization gate
-The project SHALL provide a documented 30-minute characterization gate for the K7 physical microphone and the current active Realtek speakers physical render endpoint through the frozen default AEC3 path, with MiniAEC rendering to the supported `CABLE Input` endpoint and an ordinary capture client continuously consuming its paired `CABLE Output` for the scored interval.
+The project SHALL provide a documented 30-minute functional-stability gate and a separate clock-drift characterization gate for the K7 physical microphone and the current active Realtek speakers physical render endpoint through the frozen default AEC3 path, with MiniAEC rendering to the supported `CABLE Input` endpoint and an ordinary capture client continuously consuming its paired `CABLE Output` for the scored interval.
 
 #### Scenario: Characterization run is valid
 - **WHEN** the exact physical endpoints and VB-CABLE pair remain active, render packets are present for the drift-scored interval, `CABLE Output` is continuously consumed, at least 30 minutes of required evidence is captured and observation coverage satisfies the documented threshold
 - **THEN** the analyzer produces a conclusive drift disposition and a separate functional-stability result
+
+#### Scenario: Functional gate completes with insufficient active render coverage
+- **WHEN** the exact physical endpoints and VB-CABLE pair remain active, `CABLE Output` is continuously consumed, at least 30 minutes of metadata evidence is captured, the engine completes without a functional-stability failure and active render coverage is below the clock-drift analyzer threshold
+- **THEN** the report marks the functional-stability gate passed when its continuity, boundedness, safety and client-consumption conditions are satisfied, marks clock-drift characterization `inconclusive` and makes no clock-drift compensation or long-run drift claim
 
 #### Scenario: Functional stability passes
 - **WHEN** the scored interval completes without terminal engine failure, unexplained discontinuity or reset, stale-audio submission, output failure, invalid AEC output, processing deadline miss, growing queue depth or unaccounted client interruption

@@ -269,7 +269,7 @@ mod tests {
   #[test]
   fn evidence_path_stays_in_the_ignored_private_root() {
     assert!(validated_evidence_root(Path::new("artifacts/bypass")).is_ok());
-    assert!(validated_evidence_root(Path::new("driver/windows/out/validation/engine")).is_err());
+    assert!(validated_evidence_root(Path::new("legacy-evidence/engine")).is_err());
     assert!(validated_evidence_root(Path::new("testdata/private-audio")).is_err());
     assert!(validated_evidence_root(Path::new("artifacts/../testdata")).is_err());
   }

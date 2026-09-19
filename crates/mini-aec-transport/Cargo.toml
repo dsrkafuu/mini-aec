@@ -1,9 +1,0 @@
-[package]
-name = "mini-aec-transport"
-description = "Project-owned virtual microphone transport contract for MiniAEC"
-edition.workspace = true
-license.workspace = true
-version.workspace = true
-
-[lints]
-workspace = true

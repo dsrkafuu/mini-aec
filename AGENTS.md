@@ -56,6 +56,7 @@ Before changing audio capture, synchronization, AEC, dependencies, VB-CABLE outp
 
 - Algorithm changes require old/new processing of identical inputs. Compare far-end removal, convergence, double-talk voice preservation, runtime, and failure behavior; suppression alone is insufficient.
 - Validate the product path end-to-end by rendering to `CABLE Input` and consuming the paired `CABLE Output`, not only a WAV produced by the lab.
+- Third-party validation clients such as Windows Recorder, Discord, meeting software and other test applications are user-operated: the user manually launches, configures, starts, stops and closes them; the agent only runs MiniAEC commands and reads metadata, and must not launch or operate those clients.
 - Automated checks must not download, install, update, or remove VB-CABLE and must not mutate drivers, certificates, boot configuration, devices, or Windows default audio roles.
 - `artifacts/` contains private local recordings. Never stage, commit, upload, or delete it unless the user explicitly requests that exact action.
 - Commit only redistributable synthetic or public material under `testdata/`, with source and license recorded.

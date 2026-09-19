@@ -136,6 +136,10 @@ Build from an x64 Visual Studio Developer PowerShell with the C++ build tools, M
 
 VS Code uses the tracked `.vscode/settings.json` and `.tools/rust-analyzer.cmd` wrapper so rust-analyzer build-script loading and on-save checks inherit the same x64 Visual Studio, repository-local Meson/Ninja, and libclang environment. After cloning or changing this configuration, reload the VS Code window; the first native WebRTC analysis build may take several minutes. Only the project-owned root `.tools/*.cmd` entry points are tracked—downloaded tool runtimes below `.tools/` remain ignored.
 
+## Optional local cleanup
+
+`target/` contains Cargo, WebRTC, and Tauri build outputs and can be removed manually after validation with `cargo clean` when the next build can recreate them. Downloaded tool runtimes below `.tools/` can likewise be removed manually while preserving the tracked root `.tools/*.cmd` helpers. These cleanup actions do not remove source files, private `artifacts/` evidence, or the retained external VB-CABLE package at `vendor/VBCABLE_Driver_Pack45`.
+
 ## Checks
 
 ```powershell

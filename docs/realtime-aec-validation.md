@@ -71,7 +71,7 @@ M3 functional acceptance required the approved driver lifecycle to complete with
 
 ## Validation record
 
-The separately approved 2026-07-24 elevated smoke run used the development validation package and the explicit physical K7 microphone and Sound Blaster X4 render roles. All generated JSONL, capture manifests and private WAV files remain under ignored `driver/windows/out/validation/` paths; endpoint IDs and recordings are not copied into this document.
+The separately approved 2026-07-24 elevated smoke run used the development validation package and the explicit physical K7 microphone and Sound Blaster X4 render roles. Its generated JSONL, capture manifests and private WAV files were local ignored evidence; exact paths and endpoint IDs are not copied into this document and the retired evidence root is not an active repository path.
 
 The smoke evidence establishes the following engineering behavior:
 
@@ -84,7 +84,7 @@ This earlier run is structural and metadata evidence only. Its missing listening
 
 ### 2026-08-02 acoustic, client and rollback run
 
-The resumed approved run used the physical K7 microphone and Realtek speakers. Exact endpoint IDs, private Windows Recorder content, crash diagnostics and JSONL evidence remain only below ignored `driver/windows/out/validation/m3-acoustic-20260802/`; no PCM, endpoint ID or meeting content is copied into this document.
+The resumed approved run used the physical K7 microphone and Realtek speakers. Exact endpoint IDs, private Windows Recorder content, crash diagnostics and JSONL evidence remain only in the retired local evidence record; no PCM, endpoint ID or meeting content is copied into this document.
 
 - A continuous Windows Recorder capture covered far-end-only, near-end-only, double-talk, render silence, render recovery and a fresh AEC session transition. The first 300-second engine session produced 30,003 frames and accepted 29,975 into the sink. It recorded 19,231 paired frames, 10,744 counted silent references, one stale render frame, three alignment/AEC resets, 26 microphone-queue latest-wins discards, 16 driver underruns and 4,680 driver latest-wins discards, with zero invalid AEC output, deadline miss, rejected write, sink failure or terminal error. Processing P99 was 250 microseconds and maximum was 694 microseconds.
 - The following 90-second fresh recovery session used distinct run, session and AEC identities, produced 9,002 frames, accepted 8,999, and added no microphone-queue or driver overflow/discard. The cumulative driver underrun count increased by 11, with no invalid AEC output, deadline miss, rejected write, sink failure, stale replay or terminal error. The user reported no audible gap or stale segment across silence, recovery or the session transition.

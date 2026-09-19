@@ -99,7 +99,7 @@ cargo fmt --all -- --check
   --software-revision "<git-revision>"
 ```
 
-默认在 event 文件旁写 `stability-report.json`。当前输入、operator sidecar 和输出都位于 ignored `artifacts/`；分析器仍可只读打开 `driver/windows/out/` 中保留的历史输入，但新报告只能写入 `artifacts/`。命令不访问 PCM、不联网，也不安装、更新、restart 或移除 driver/device，不修改证书、BCD、Windows default roles，且绝不发起系统重启。
+默认在 event 文件旁写 `stability-report.json`。当前输入、operator sidecar 和输出都位于 ignored `artifacts/`；历史 SysVAD 输入只作为 Git/OpenSpec 历史证据保留，不再作为当前分析器的文件根。新报告只能写入 `artifacts/`。命令不访问 PCM、不联网，也不安装、更新、restart 或移除 driver/device，不修改证书、BCD、Windows default roles，且绝不发起系统重启。
 
 ## Thirty-minute characterization
 

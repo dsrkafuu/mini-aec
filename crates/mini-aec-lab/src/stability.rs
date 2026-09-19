@@ -1321,7 +1321,7 @@ fn validated_existing_evidence_path(requested: &Path) -> Result<PathBuf> {
   let canonical = fs::canonicalize(&absolute)
     .with_context(|| format!("failed to resolve existing evidence {}", absolute.display()))?;
   if !is_within_read_evidence_roots(&canonical)? {
-    bail!("evidence must remain below artifacts/ or the historical driver/windows/out/ root");
+    bail!("evidence must remain below the ignored artifacts/ root");
   }
   Ok(canonical)
 }
@@ -1369,10 +1369,7 @@ fn is_within_read_evidence_roots(path: &Path) -> Result<bool> {
     .parent()
     .and_then(Path::parent)
     .context("failed to resolve the MiniAEC repository root")?;
-  for root in [
-    repository.join("artifacts"),
-    repository.join("driver").join("windows").join("out"),
-  ] {
+  for root in [repository.join("artifacts")] {
     if root.exists() && path.starts_with(fs::canonicalize(root)?) {
       return Ok(true);
     }
