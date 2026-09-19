@@ -1,12 +1,12 @@
 # MiniAEC 技术方案
 
-状态：M1 虚拟麦克风数据通路、M2 实时 bypass、M3 实时默认 AEC3 与普通用户 runtime access 已通过各自的开发期功能验收和完整 rollback。M4 的 schema v2、离线长时稳定性分析器和合成验证已实现；在两次早期 K7 / Realtek speakers 尝试暴露并修复 final snapshot cleanup 缺陷和自动 render coverage 问题后，无人值守 30 分钟 run 已产生 conclusive `bounded-synchronizer-sufficient` drift 结果，metadata 与 transport 条件正常，functional gate 仅等待事后真实听感 observation。30 分钟是本 change 的最终时长 gate，不再要求两小时预发布验证；初期版本保留隐私受限的 metadata 诊断能力，只有真实日志证据才触发独立的延长验证 change。Double-talk 可懂但存在明显近端吞字，作为冻结默认算法的已知质量限制保留，当前不调参；正式安装签名、完整长时真机结论与算法质量优化仍属于后续工作，因此项目尚不是可分发的普通用户产品
+状态：产品输出路线已从项目自有 SysVAD 驱动完全迁移到用户自行安装的 VB-CABLE。历史 M1–M4 驱动验证记录仍保留为工程证据，但不再代表当前产品依赖或发布方案。当前 OpenSpec change `adopt-vb-cable-output` 负责用户态输出实现、验证与旧驱动代码清理。
 
 目标平台：Windows 11 x64
 
 应用技术栈：Rust + Tauri 2（无窗口托盘）+ WASAPI + WebRTC AEC3
 
-驱动技术栈：Windows WDK / SysVAD 派生驱动
+输出技术栈：event-driven shared-mode WASAPI render + 用户自行安装的 VB-CABLE
 
 ## 1. 产品边界
 
@@ -15,10 +15,10 @@ MiniAEC 只解决外放场景的声学回声：实际送往物理音响的声音
 产品输入与输出固定为：
 
 ```text
-物理麦克风 + 物理播放设备 loopback -> AEC -> MiniAEC Microphone
+物理麦克风 + 物理播放设备 loopback -> AEC -> CABLE Input -> CABLE Output
 ```
 
-用户可以把 `MiniAEC Microphone` 继续交给 NVIDIA Broadcast、会议软件自带降噪或其他二级处理器。MiniAEC 本身不实现：
+用户可以把 `CABLE Output` 继续交给 NVIDIA Broadcast、会议软件自带降噪或其他二级处理器。MiniAEC 本身不实现：
 
 - 噪声抑制（NS）；
 - 自动增益（AGC）；
@@ -27,7 +27,7 @@ MiniAEC 只解决外放场景的声学回声：实际送往物理音响的声音
 - macOS、Linux 或移动端支持；
 - 设置窗口或 Web 前端。
 
-第一个可用版本必须自带 `MiniAEC Microphone`。只有托盘壳、离线 WAV 输出或依赖第三方虚拟线缆都不能算可用版本。
+第一个可用版本必须稳定写入用户自行安装的 `CABLE Input`，并由普通客户端持续消费 `CABLE Output`。MiniAEC 不捆绑、下载、安装、更新、卸载或授权 VB-CABLE。
 
 ## 2. 总体架构
 
@@ -42,9 +42,10 @@ flowchart LR
   Normalize --> Align["有界 QPC 时间对齐"]
   Align --> AEC["EchoCanceller boundary / WebRTC AEC3"]
   AEC --> Safety["有限数检查、静音和有界重建"]
-  Safety --> Bridge["VirtualMicrophoneSink boundary"]
-  Bridge --> Driver["MiniAEC Microphone"]
-  Driver --> Downstream["可选二级降噪或会议软件"]
+  Safety --> Bridge["AudioOutput boundary"]
+  Bridge --> CableInput["CABLE Input"]
+  CableInput --> CableOutput["CABLE Output"]
+  CableOutput --> Downstream["可选二级降噪或会议软件"]
   Tray["Tauri tray host"] -. 控制和状态 .-> Engine["Rust audio engine"]
   Engine --> Capture
   Engine --> Loopback
@@ -58,36 +59,36 @@ Tauri 只负责进程生命周期和低频控制面。M3 当前实现包含：
 - 当前状态；
 - AEC 启用或显式旁路；
 - 重启音频引擎；
-- 从 `MINI_AEC_MICROPHONE_ID` 和 `MINI_AEC_RENDER_ID` 读取精确的开发期 endpoint ID；
+- 从 `MINI_AEC_MICROPHONE_ID`、`MINI_AEC_RENDER_ID`、`MINI_AEC_CABLE_INPUT_ID` 和 `MINI_AEC_CABLE_OUTPUT_ID` 读取精确 endpoint ID；
 - 退出。
 
 物理设备选择界面、设置持久化、默认设备自动跟随、开机启动和打开日志目录不属于 M3。不创建 WebView 或主窗口。Tauri runtime 不处理 PCM，托盘销毁也不能意外穿透实时线程边界。
 
 ### 2.2 Rust 音频引擎
 
-`crates/mini-aec-engine/` 负责双输入设备生命周期、预分配缓冲、格式转换、10 ms 调度、有界 QPC 同步、默认 AEC、虚拟麦克风输出和故障状态。它能脱离 Tauri 运行合成测试。
+`crates/mini-aec-engine/` 负责双输入设备生命周期、预分配缓冲、10 ms 调度、有界 QPC 同步、默认 AEC、项目级输出和故障状态。它能脱离 Tauri 和具体输出实现运行合成测试。
 
 已建立的核心边界包括：
 
 - `AudioInput` / `AudioInputFactory`：承载显式选择且角色校验的物理 microphone capture 与 physical render loopback，Windows 类型不泄漏；
 - `EchoCanceller` / `EchoCancellerFactory`：定义 render-first 处理、capture 输出与 adapter 重建，WebRTC 类型只存在于默认 M131 adapter；
-- `VirtualMicrophoneSink`：向驱动提交处理后 PCM；
-- `Engine` / `EngineSnapshot`：非实时控制、只读状态、同步/AEC/队列/处理时延/故障诊断。
+- `AudioOutput` / `AudioOutputFactory`：接收完整 10 ms、48 kHz mono finite frame，具体 endpoint 格式转换和 WASAPI render 留在 Windows adapter；
+- `Engine` / `EngineSnapshot`：非实时控制、只读状态、同步/AEC/队列/转换/输出时延/故障诊断。
 
-M3 的处理 worker 独占同步器、`EchoCanceller` 和一次 sink session；两个输入 worker 分别在自己的线程创建、使用、停止并销毁 COM/WASAPI 对象。三个 worker 使用有限等待和有界队列，停止或显式 restart 会 join 全部 worker、清空 PCM 和同步/AEC 状态，并从协议 sequence 零开始新 session。
+处理 worker 独占同步器、`EchoCanceller` 和一次 output session；两个输入 worker 与 output worker 分别在自己的线程创建、使用、停止并销毁 COM/WASAPI 对象。全部 worker 使用有限等待和有界队列，停止或显式 restart 会 join 全部 worker、清空 PCM、转换、同步与 AEC 状态，并建立全新的 output session。
 
-WebRTC、WASAPI、Tauri 和驱动通信类型不能泄漏到这些项目级合同之外。
+WebRTC、WASAPI、Tauri 和 VB-CABLE 识别细节不能泄漏到这些项目级合同之外。
 
-M2 的实时 bypass 合同固定为：
+当前实时 bypass 合同为：
 
-- 配置必须提供精确的物理 capture endpoint ID；名称只用于诊断，不能自动跟随默认设备，也不能把 `MiniAEC Microphone` 选为自身输入；
-- 一个 capture worker 在自身线程创建、使用并销毁 WASAPI/COM 对象，一个 sink worker 独占一次 `VirtualMicrophoneSink` session；实时 worker 不写文件、不打印、不等待 Tauri 或 async runtime；
+- 配置必须提供精确的物理 capture endpoint ID 和一对精确的 VB-CABLE endpoint ID；名称只用于诊断，不能自动跟随默认设备，也不能把所选 `CABLE Output` 作为物理麦克风；
+- capture worker 和 output worker 在各自线程创建、使用并销毁 WASAPI/COM 对象，output worker 独占一次 `AudioOutput` session；实时 worker 不写文件、不打印、不等待 Tauri 或 async runtime；
 - WASAPI 使用 event-driven shared mode 和 Windows Audio Engine conversion 请求 48 kHz、单声道 `f32`，随后清理非有限数、限制范围并组装严格的 480-sample 帧；
-- capture 到 sink 之间只有四个完整帧的同步 latest-wins ring；满时丢弃最旧未读帧，协议 sequence 在 dequeue 时从零分配，因此本地丢帧不会制造协议序号缺口；
-- 生命周期为 `Stopped → Starting → RunningBypass → Stopping → Stopped`，source invalidation、不可恢复 capture 错误、driver absence、access denial、sender contention、version mismatch 或 rejected write 会终止当前 run、清空 PCM 并进入 `Failed`，只能显式 restart；
-- snapshot 只包含 endpoint、run/session identity、packet/frame、silence、discontinuity、timestamp、queue、sink 和 error 元数据，不包含 PCM 或会议内容。
+- capture 到 output 之间只有四个完整帧的 latest-wins ring；满时丢弃最旧未读帧，保持 freshest-audio 行为而不增长延迟；
+- 生命周期为 `Stopped → Starting → RunningBypass → Stopping → Stopped`，source invalidation、不可恢复 capture 错误、缺失或歧义的 VB-CABLE pair、output access failure 或 rejected render 会终止当前 run、清空 PCM 与转换状态并进入 `Failed`，只能显式 restart；
+- snapshot 只包含 endpoint、run/session identity、packet/frame、silence、discontinuity、timestamp、queue、conversion、output 和 error 元数据，不包含 PCM 或会议内容。
 
-M2 验收所用的历史开发包只允许 SYSTEM 和 Administrators，因此当时的 headless bypass 真机测试是 elevated 路径。后续 change `enable-normal-user-virtual-microphone-access` 已加入受保护的 Interactive Users 最小读写 DACL、明确 busy 仲裁和非提升验证工具，并通过批准后的新包安装、普通用户端到端消费、owner 退出/重连与完整 rollback。显式 bypass 是独立模式，不是 AEC 故障时静默泄漏原始麦克风的回退策略。
+历史 M2 驱动验收和后续普通用户访问验收只作为引擎有界队列、生命周期与 stale-audio 防护证据，不再定义当前输出实现。显式 bypass 仍是独立模式，不是 AEC 故障时静默泄漏原始麦克风的回退策略。
 
 M3 实时 AEC 合同固定为：
 
@@ -95,7 +96,7 @@ M3 实时 AEC 合同固定为：
 - microphone 与 render 各使用八帧 latest-wins 同步队列；以 microphone 为处理节拍，在统一 QPC 时间线上按 5 ms 容差配对，记录 stale、silent-reference、overflow、discard、discontinuity 与 timestamp error；
 - 单帧绝对偏差超过 100 ms 时 reference 视为不可用；带 render 时间戳但连续 50 个 capture 帧仍无法配对时终止当前 run。物理播放完全静音时，active loopback endpoint 合法地可能不产生 packet，此时持续使用计数静音参考并保持可见 `Degraded`，不能仅因没有 render timestamp 终止或切换 bypass；恢复十个连续健康配对帧后才回到 `RunningAec`；
 - discontinuity 或 timestamp error 清空受影响的部分帧并建立新同步 epoch，同时重建 AEC；无效 AEC 输出当前帧静音并有界重建，连续三次处理失败后终止；
-- 生命周期包含 `RunningAec` 与 `Degraded`，任何 AEC、同步、输入或 sink 的终止错误都进入 `Failed`，不会自动切换到 `RunningBypass`；
+- 生命周期包含 `RunningAec` 与 `Degraded`，任何 AEC、同步、输入或 output 的终止错误都进入 `Failed`，不会自动切换到 `RunningBypass`；
 - 处理耗时以固定桶记录 P50/P95/P99/maximum，10 ms deadline miss 与全部诊断写盘都不阻塞实时 worker。
 
 ### 2.3 Windows 音频适配
@@ -108,13 +109,11 @@ M3 实时 AEC 合同固定为：
 
 依赖来源和本地构建修改以 [`vendor/UPSTREAM.md`](../vendor/UPSTREAM.md) 为准。升级必须遵循 [`upstream-upgrade-plan.md`](upstream-upgrade-plan.md)。
 
-### 2.5 虚拟麦克风驱动
+### 2.5 VB-CABLE 输出适配器
 
-驱动基于固定版本的 Microsoft SysVAD，使用 WDK 所需的 C/C++。公共 capture endpoint 名称固定为 `MiniAEC Microphone`。
+MiniAEC 通过项目自有输出边界把完整 10 ms、48 kHz mono frame 交给 Windows 适配器。适配器按精确 endpoint ID 打开 `CABLE Input` 的 event-driven shared-mode WASAPI render stream，必要时在边界完成确定性的 channel/sample/mix-format 转换，并记录格式、padding、render、conversion、underrun、overflow、discard 与 failure metadata。
 
-当前验证实现使用受限控制设备加驱动自有有界环形缓冲。源码中的受保护 DACL 为 SYSTEM/Administrators 保留 full control，只向 Interactive Users 授予协议需要的 generic read/write，不向 Everyone、Authenticated Users、Builtin Users、anonymous、guest 或 network logon 授权；驱动只公开 `MiniAEC Microphone` capture endpoint。一个自旋锁保护的 owner handle 独占 sender slot，第二个授权进程得到明确 busy，close/process exit/driver shutdown 清 session 与 PCM。任何本地交互进程仍可竞争该机器级 slot，per-executable trust、multi-session arbitration 与 service broker 留待 M5 安装/威胁模型决策。
-
-控制协议固定为 48 kHz、单声道、PCM16、每帧 480 samples/960 bytes。驱动的 10 帧非分页环形缓冲不映射到用户态：欠载输出零值静音，溢出丢弃最旧未消费完整帧并保留最新帧，新会话原子清空旧 PCM。协议版本、会话 ID、单调序列、当前深度、高水位、拒绝写入、欠载、溢出和丢弃帧均可诊断。
+`CABLE Output` 只能作为下游录音端点，不能作为物理麦克风输入；`CABLE Input` 不能作为 AEC 的物理 render-loopback 来源。缺失、inactive、role 错误或 pair 不明确时必须失败，不能跟随 Windows 默认设备。
 
 ## 3. 音频合同
 
@@ -149,7 +148,7 @@ M3 实时 AEC 合同固定为：
 | AEC 错误或非有限数 | 当前帧静音、进入 degraded 并重建处理器；不得静默泄漏原始回声 |
 | 用户明确关闭 AEC | 使用可见的 raw microphone bypass 状态 |
 | 输入或回放设备 invalidation | 当前 run 终止、清空缓冲并进入 `Failed`；只能由显式 restart 建立新流 |
-| 用户态进程失联 | 驱动输出静音，不重复最后一帧 |
+| 用户态进程停止 | 关闭 render session 并清空 retained PCM，不重复最后一帧 |
 | 诊断写盘过慢 | 丢诊断帧并计数，不能阻塞实时路径 |
 
 原始麦克风旁路只能由用户明确选择，不能作为无提示的 AEC 故障降级。
@@ -160,10 +159,11 @@ M3 实时 AEC 合同固定为：
 mini-aec/
 ├─ Cargo.toml
 ├─ crates/
-│  ├─ mini-aec-lab/       # 已有：采集、离线 AEC、headless bypass 与实时默认 AEC
-│  └─ mini-aec-engine/    # 已有：双输入同步、默认 AEC、bypass、项目级边界和 Windows adapter
-├─ src-tauri/             # 已有：连接 engine controller 的无窗口托盘宿主
-├─ driver/windows/        # SysVAD 来源、驱动和安装边界
+│  ├─ mini-aec-lab/            # 采集、离线 AEC、headless bypass 与实时默认 AEC
+│  ├─ mini-aec-engine/         # 双输入同步、默认 AEC、bypass 和项目级边界
+│  ├─ mini-aec-output/         # 平台无关的有界输出 session 合同
+│  └─ mini-aec-windows-output/ # VB-CABLE 识别和 WASAPI render adapter
+├─ src-tauri/                  # 连接 engine controller 的无窗口托盘宿主
 ├─ docs/
 ├─ vendor/
 └─ testdata/              # 仅可再分发且有来源/许可证的素材
@@ -172,6 +172,8 @@ mini-aec/
 `artifacts/` 是被 Git 忽略的私人本地录音目录，不属于可提交项目结构。
 
 ## 7. 里程碑
+
+M1–M4 是已完成且保留原始数字的历史 SysVAD 验证记录；它们不再描述当前产品依赖。当前产品里程碑从 M5 的 VB-CABLE 迁移开始。
 
 ### M0：仓库准备基线
 
@@ -184,7 +186,7 @@ mini-aec/
 
 完成不代表产品可用。
 
-### M1：`MiniAEC Microphone` 数据通路 spike
+### 历史 M1：`MiniAEC Microphone` 数据通路 spike
 
 - 固定 SysVAD 来源和许可证；
 - 生成并安装测试签名驱动；
@@ -195,7 +197,7 @@ mini-aec/
 
 已完成。开发期测试签名包已经验证唯一公共 capture endpoint、固定帧传输、sender/session 隔离、录音客户端消费、重启行为和完整 rollback；该结论不等同于正式签名、installer 或普通用户权限方案已经完成。
 
-### M2：实时 bypass 链路
+### 历史 M2：实时 bypass 链路
 
 - 建立 `mini-aec-engine`；
 - 物理麦克风实时写入 `MiniAEC Microphone`；
@@ -204,7 +206,7 @@ mini-aec/
 
 仓库内 engine、Windows capture adapter、headless harness 和合成验证已建立；开发期 elevated 真机验收已覆盖五分钟连续录音、stop/start 隔离、sender contention、设备 restart 和完整 rollback。活动普通用户 access change 不改变 M2 音频合同，且普通运行验证不得自行改变系统；正式安装与签名仍是后续工作。
 
-### M3：实时默认 AEC3
+### 历史 M3：实时默认 AEC3
 
 - 同时接入物理 render loopback；
 - 10 ms QPC 对齐并运行默认 M131 AEC3；
@@ -213,7 +215,7 @@ mini-aec/
 
 归档 OpenSpec change `implement-realtime-default-aec` 的仓库实现、headless `realtime-aec`、托盘控制、合成自动化、Windows Recorder 与 Discord 消费、全部声学场景评估和完整 rollback 均已完成，因此本阶段的默认基线功能验收与质量表征已 accepted。Far-end-only（包括较大播放音量）、near-end-only 和 render silence/recovery 符合预期；double-talk 的明显近端吞字未达到期望质量目标，已作为默认算法限制记录，并延期到需要相同输入旧/新证据的独立 change。该阶段不包含 AEC 调参、依赖升级、长期漂移补偿、普通用户驱动权限、安装或生产签名。
 
-### M4：漂移与稳定性
+### 历史 M4：漂移与稳定性
 
 - 已实现 metadata schema v2 和 `stability-report`，用单调运行时间、两路 device-position/QPC clean segment、五分钟 rate windows、relative ppm、不确定度、同步后果和独立 functional gate 表征长时行为；
 - 使用 K7 和当前活动的 Realtek speakers 进行至少 30 分钟漂移测量，普通客户端必须持续消费 `MiniAEC Microphone`，raw evidence 与 operator observations 保留在 ignored `artifacts/`；
@@ -222,15 +224,13 @@ mini-aec/
 
 2026-08-12/13 的前两次 K7 / Realtek speakers 尝试分别暴露了旧 binary 的 final render-queue snapshot cleanup 缺陷和人工播放不足导致的 render coverage 问题。修复后使用 runtime-only 自动播放与普通 FFmpeg DirectShow client 消费完成第三次 30 分钟 run：observed duration 为 1,800.021 秒，periodic coverage 为 100%，usable duration 与最长 clean segment 均为 1,798.962 秒，无 excluded interval，并产生五个 eligible window；中位 drift 为 -2.832 ppm，MAD 为 0.149 ppm，median uncertainty 为 0.081 ppm，保守 drift 为 1.832 ppm，预计 30 分钟 phase 为 3.297 ms，因此 drift disposition 为 `bounded-synchronizer-sufficient`。双队列最终归零，driver overflow/discard、user-space overflow/discard、sink failure、invalid output、deadline miss 和 terminal error 均为零；所有 alignment/AEC recovery、单个 stale render frame 和六次新增 driver underrun 都发生在首个约 1.06 秒的启动收敛区间，之后未再增长。普通 client 与 playback process 覆盖完整 interval，用户核对录音后确认没有问题，operator sidecar 据此解释 bounded startup recovery，最终 functional disposition 为 `passed` 且 `thirty_minute_accepted` 为 true。批准的驱动 rollback 和用户手动重启后，最终只读 inventory 确认 validation device、endpoint、package、certificate、service 与服务注册表项均已移除，TESTSIGNING 为 No，K7 与 Realtek 继续分别拥有三个默认输入和输出角色。30 分钟结果完成本 change 的最终时长要求；当前证据既不支持创建 `compensate-audio-clock-drift` change，也不触发延长验证。
 
-### M5：安装与签名
+### M5：VB-CABLE 产品输出
 
-- `enable-normal-user-virtual-microphone-access` 的最小 Interactive Users runtime 权限、非提升端到端消费和完整 rollback 已完成批准的真机 acceptance；
-- 已定义 production release manifest、signed package layout、compatibility preflight、lifecycle state、inventory postcondition 和 metadata-only release evidence；这些仓库内模型不执行 Windows system mutation；
-- 协调应用与驱动安装、升级、回滚和卸载；
-- 区分开发测试签名与正式发布签名；
-- 完成主流会议软件兼容性矩阵。
-
-M5 的初始目标是可信的单用户 Windows 11 x64 桌面，继续使用现有非提升 Interactive Users transport，并明确记录本地交互进程可竞争 machine-wide sender slot 的限制；per-executable trust、multi-session arbitration 或 service broker 不在本 change 内。生产证书、正式 installer、真实安装/升级/回滚/卸载和会议软件矩阵仍需外部签名/系统授权与用户手动处理 restart boundary。
+- 用户从 VB-Audio 官方来源自行安装并管理受支持的 VB-CABLE 版本；MiniAEC 不捆绑或执行安装生命周期；
+- 按精确 ID、data-flow role 与可核验设备 metadata 解析唯一的 `CABLE Input` / `CABLE Output` pair；
+- 通过 event-driven shared-mode WASAPI 把有界、转换后的处理帧写入 `CABLE Input`；
+- Windows Recorder 和至少一个目标会议应用从 `CABLE Output` 完成 bypass、默认 AEC、restart/invalidation 与 30 分钟稳定性验收；
+- 等价验收通过后删除全部自有驱动、INF/SYS/CAT、签名和 release lifecycle 代码。
 
 ## 8. 验证原则
 
@@ -241,7 +241,7 @@ M5 的初始目标是可信的单用户 Windows 11 x64 桌面，继续使用现�
 - double-talk 的吞音、抽吸和音量稳定性；
 - 端到端延迟、CPU P50/P95/P99；
 - discontinuity、underrun、overrun、reset 和恢复；
-- `MiniAEC Microphone` 被下游软件实际读取时的连续性。
+- `CABLE Output` 被下游软件实际读取时的连续性。
 
 更高的抑制量不能覆盖近端人声损伤。调参只能在默认实时产品链路出现可复现失败后开始，并且一次改变一个机制。
 
@@ -251,10 +251,10 @@ M5 的初始目标是可信的单用户 Windows 11 x64 桌面，继续使用现�
 - 默认不保存录音；
 - 诊断录音必须显式开启并写入 `artifacts/`；
 - 日志不包含 PCM 或会议内容；
-- 驱动通信接口使用最小权限和有界缓冲；
-- 驱动安装、更新和卸载需要明确授权及回滚路径；
+- 输出边界使用精确 endpoint、最小必要访问与有界缓冲；
+- VB-CABLE 安装、更新、卸载、许可和任何所需系统重启均由用户按官方流程在 MiniAEC 之外完成；
 - 第三方源码、模型或测试素材必须记录版本、来源、许可证和 hash。
 
 ## 10. SDD 状态
 
-仓库使用 OpenSpec 的 `spec-driven` schema 和 Codex 集成。M1、M2、M3、`enable-normal-user-virtual-microphone-access` 与 M4 `characterize-long-run-audio-stability` 均已完成、同步 capability 并归档，`production-driver-lifecycle` 为当前 active change。Normal-user access 的仓库内 ACL、busy 语义、非提升验证工具、批准的真机 acceptance 和完整 rollback 已完成；M4 的 30 分钟 K7/Realtek 稳定性 gate、operator observation、最终报告和完整 rollback 也已完成。任何后续 test-sign、install、device activation、uninstall 或 rollback 仍须另行批准，操作系统 restart 永远只由用户手动执行。
+仓库使用 OpenSpec 的 `spec-driven` schema 和 Codex 集成。历史 M1–M4 与普通用户驱动访问 change 已完成并归档；`production-driver-package` 和 `production-driver-lifecycle` 已作为 superseded history 归档且未把未完成的生产驱动需求同步到主规格。当前 active change 是 `adopt-vb-cable-output`。它完成前不得把 VB-CABLE 路线描述为已验收的可分发产品；任何外部驱动安装或所需 Windows restart 都只由用户手动执行。

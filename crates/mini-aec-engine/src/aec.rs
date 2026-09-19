@@ -1,7 +1,7 @@
 use std::error::Error;
 use std::fmt::{self, Display, Formatter};
 
-use mini_aec_transport::FRAME_SAMPLES;
+use mini_aec_output::FRAME_SAMPLES;
 use webrtc_audio_processing::config::EchoCanceller as WebRtcEchoCanceller;
 use webrtc_audio_processing::{Config, Processor};
 
@@ -130,7 +130,7 @@ impl EchoCanceller for DefaultEchoCanceller {
 
 #[cfg(test)]
 mod tests {
-  use mini_aec_transport::FRAME_SAMPLES;
+  use mini_aec_output::FRAME_SAMPLES;
 
   use super::{DefaultEchoCancellerFactory, EchoCancellerFactory};
 

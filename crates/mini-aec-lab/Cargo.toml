@@ -15,8 +15,8 @@ serde_json = "1.0.150"
 webrtc-audio-processing = { version = "~2.1.0", features = ["bundled"] }
 
 [target.'cfg(windows)'.dependencies]
-mini-aec-transport = { path = "../mini-aec-transport" }
-mini-aec-windows-transport = { path = "../mini-aec-windows-transport" }
+mini-aec-output = { path = "../mini-aec-output" }
+mini-aec-windows-output = { path = "../mini-aec-windows-output" }
 wasapi = "0.23.0"
 
 [lints]

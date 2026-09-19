@@ -2451,6 +2451,41 @@ mod tests {
   }
 
   #[test]
+  fn passing_preflight_handoff_does_not_claim_installation_or_activation() {
+    let manifest = valid_manifest();
+    let (root, package) = candidate_package(&manifest);
+    let report = serde_json::to_value(&package).expect("serialize package preflight report");
+    assert_eq!(
+      report["manifest"],
+      serde_json::to_value(&manifest).expect("serialize manifest")
+    );
+    for forbidden_claim in [
+      "activated",
+      "endpoint_activated",
+      "installed",
+      "installation_succeeded",
+    ] {
+      assert!(
+        report.get(forbidden_claim).is_none(),
+        "unexpected {forbidden_claim} claim"
+      );
+    }
+
+    let before = empty_inventory();
+    let coordinator =
+      LifecycleCoordinator::prepare_install(&package, before.clone()).expect("prepare install");
+    assert_eq!(coordinator.state(), LifecycleState::Preflighted);
+    assert_eq!(coordinator.journal().state, LifecycleState::Preflighted);
+    assert_eq!(coordinator.journal().before, before);
+    assert!(coordinator.journal().pending_user_action.is_none());
+
+    let backend = FakeLifecycleBackend::new(empty_inventory());
+    assert_eq!(backend.stage_calls, 0);
+    assert_eq!(backend.activation_calls, 0);
+    fs::remove_dir_all(root).expect("remove synthetic package");
+  }
+
+  #[test]
   fn lifecycle_coordinator_installs_and_verifies_outside_realtime_workers() {
     let manifest = valid_manifest();
     let (root, package) = candidate_package(&manifest);

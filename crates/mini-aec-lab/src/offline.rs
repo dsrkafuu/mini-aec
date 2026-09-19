@@ -349,11 +349,10 @@ fn run_aec(
   let threshold_power = 10_f64.powf(active_threshold_dbfs / 10.0);
   let mut output = Vec::with_capacity(microphone.len());
   let mut active_stats = None;
+  let (microphone_frames, _) = microphone.as_chunks::<FRAME_SAMPLES>();
+  let (render_frames, _) = render.as_chunks::<FRAME_SAMPLES>();
 
-  for (microphone_frame, render_frame) in microphone
-    .chunks_exact(FRAME_SAMPLES)
-    .zip(render.chunks_exact(FRAME_SAMPLES))
-  {
+  for (microphone_frame, render_frame) in microphone_frames.iter().zip(render_frames) {
     let mut render_channels = vec![render_frame.to_vec()];
     processor
       .process_render_frame(&mut render_channels)
@@ -386,11 +385,12 @@ fn calculate_metrics(
   let mut active_output_energy = 0.0;
   let mut active_samples = 0;
   let mut active_frames = 0;
+  let (input_frames, _) = input.as_chunks::<FRAME_SAMPLES>();
+  let (output_frames, _) = output.as_chunks::<FRAME_SAMPLES>();
+  let (render_frames, _) = render.as_chunks::<FRAME_SAMPLES>();
 
-  for ((input_frame, output_frame), render_frame) in input
-    .chunks_exact(FRAME_SAMPLES)
-    .zip(output.chunks_exact(FRAME_SAMPLES))
-    .zip(render.chunks_exact(FRAME_SAMPLES))
+  for ((input_frame, output_frame), render_frame) in
+    input_frames.iter().zip(output_frames).zip(render_frames)
   {
     if mean_power(render_frame) > threshold_power {
       active_input_energy += energy(input_frame);

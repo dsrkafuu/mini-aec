@@ -1,4 +1,4 @@
-//! Tauri-independent real-time engine for the `MiniAEC Microphone` product path.
+//! Tauri-independent real-time engine for the paired VB-CABLE product path.
 //!
 //! This crate owns lifecycle, normalization, framing, bounded buffering and diagnostics. Windows,
 //! CLI and UI details are adapters around the project-owned contracts exposed here.
@@ -18,8 +18,9 @@ use std::error::Error;
 use std::fmt::{self, Display, Formatter};
 use std::time::Duration;
 
-use mini_aec_transport::{
-  SessionState, SinkDiagnostics, SinkError, SinkErrorKind, VirtualMicrophoneSink,
+use mini_aec_output::{
+  AudioOutput, EndpointRole, OutputDiagnostics, OutputError, OutputErrorKind, OutputFormat,
+  OutputPair, OutputSampleType, SessionState,
 };
 use serde::{Deserialize, Serialize};
 
@@ -28,8 +29,6 @@ pub use aec::{
 };
 pub use runtime::Engine;
 
-/// Public capture endpoint exposed by the `MiniAEC` driver.
-pub const PUBLIC_CAPTURE_ENDPOINT_NAME: &str = "MiniAEC Microphone";
 /// Fixed engine sample rate.
 pub const SAMPLE_RATE_HZ: u32 = 48_000;
 /// Fixed engine channel count.
@@ -59,21 +58,37 @@ pub struct EngineConfig {
   pub mode: ProcessingMode,
   pub microphone_endpoint_id: String,
   pub render_endpoint_id: Option<String>,
+  pub cable_input_endpoint_id: String,
+  pub cable_output_endpoint_id: String,
 }
 
 impl EngineConfig {
   /// Creates an explicit physical-microphone bypass configuration.
   #[must_use]
-  pub fn new(source_endpoint_id: impl Into<String>) -> Self {
-    Self::bypass(source_endpoint_id)
+  pub fn new(
+    source_endpoint_id: impl Into<String>,
+    cable_input_endpoint_id: impl Into<String>,
+    cable_output_endpoint_id: impl Into<String>,
+  ) -> Self {
+    Self::bypass(
+      source_endpoint_id,
+      cable_input_endpoint_id,
+      cable_output_endpoint_id,
+    )
   }
 
   #[must_use]
-  pub fn bypass(microphone_endpoint_id: impl Into<String>) -> Self {
+  pub fn bypass(
+    microphone_endpoint_id: impl Into<String>,
+    cable_input_endpoint_id: impl Into<String>,
+    cable_output_endpoint_id: impl Into<String>,
+  ) -> Self {
     Self {
       mode: ProcessingMode::Bypass,
       microphone_endpoint_id: microphone_endpoint_id.into(),
       render_endpoint_id: None,
+      cable_input_endpoint_id: cable_input_endpoint_id.into(),
+      cable_output_endpoint_id: cable_output_endpoint_id.into(),
     }
   }
 
@@ -81,11 +96,15 @@ impl EngineConfig {
   pub fn aec(
     microphone_endpoint_id: impl Into<String>,
     render_endpoint_id: impl Into<String>,
+    cable_input_endpoint_id: impl Into<String>,
+    cable_output_endpoint_id: impl Into<String>,
   ) -> Self {
     Self {
       mode: ProcessingMode::Aec,
       microphone_endpoint_id: microphone_endpoint_id.into(),
       render_endpoint_id: Some(render_endpoint_id.into()),
+      cable_input_endpoint_id: cable_input_endpoint_id.into(),
+      cable_output_endpoint_id: cable_output_endpoint_id.into(),
     }
   }
 }
@@ -230,14 +249,25 @@ pub trait AudioInputFactory: Send + Sync {
   ) -> Result<Box<dyn AudioInput>, SourceError>;
 }
 
-/// Creates one virtual microphone adapter for each engine run.
-pub trait VirtualSinkFactory: Send + Sync {
-  /// Connects one adapter instance for a new engine run.
+/// Resolves one explicit output pair and creates one adapter for each engine run.
+pub trait AudioOutputFactory: Send + Sync {
+  /// Performs read-only exact-ID preflight without opening an audio stream.
   ///
   /// # Errors
   ///
-  /// Returns a transport error when the driver is absent, inaccessible or busy.
-  fn connect(&self) -> Result<Box<dyn VirtualMicrophoneSink>, SinkError>;
+  /// Returns an actionable output error when the pair is missing, ambiguous or invalid.
+  fn resolve_pair(
+    &self,
+    cable_input_endpoint_id: &str,
+    cable_output_endpoint_id: &str,
+  ) -> Result<OutputPair, OutputError>;
+
+  /// Connects one adapter instance to a preflighted pair.
+  ///
+  /// # Errors
+  ///
+  /// Returns an actionable output error when the playback endpoint cannot be opened.
+  fn connect(&self, pair: &OutputPair) -> Result<Box<dyn AudioOutput>, OutputError>;
 }
 
 /// Stable error categories reported by the engine controller and snapshots.
@@ -256,12 +286,17 @@ pub enum EngineErrorKind {
   RenderFailure,
   SynchronizationFailure,
   EchoCancellerFailure,
-  DriverUnavailable,
-  SinkAccessDenied,
-  SenderBusy,
-  VersionMismatch,
-  RejectedWrite,
-  SinkFailure,
+  #[serde(alias = "driver_unavailable")]
+  OutputPrerequisiteMissing,
+  OutputAmbiguous,
+  #[serde(alias = "sink_access_denied")]
+  OutputAccessDenied,
+  OutputInvalidEndpoint,
+  OutputInvalidated,
+  #[serde(alias = "rejected_write")]
+  OutputRejectedWrite,
+  #[serde(alias = "sink_failure")]
+  OutputFailure,
   WorkerFailure,
   StopTimeout,
 }
@@ -307,16 +342,17 @@ impl EngineError {
     Self::new(kind, error.message)
   }
 
-  pub(crate) fn from_sink(error: &SinkError) -> Self {
+  pub(crate) fn from_output(error: &OutputError) -> Self {
     let kind = match error.kind() {
-      SinkErrorKind::AccessDenied => EngineErrorKind::SinkAccessDenied,
-      SinkErrorKind::DriverUnavailable => EngineErrorKind::DriverUnavailable,
-      SinkErrorKind::Busy => EngineErrorKind::SenderBusy,
-      SinkErrorKind::VersionMismatch => EngineErrorKind::VersionMismatch,
-      SinkErrorKind::RejectedWrite | SinkErrorKind::SequenceViolation => {
-        EngineErrorKind::RejectedWrite
+      OutputErrorKind::AccessDenied => EngineErrorKind::OutputAccessDenied,
+      OutputErrorKind::PrerequisiteMissing => EngineErrorKind::OutputPrerequisiteMissing,
+      OutputErrorKind::AmbiguousEndpoints => EngineErrorKind::OutputAmbiguous,
+      OutputErrorKind::InvalidEndpoint => EngineErrorKind::OutputInvalidEndpoint,
+      OutputErrorKind::DeviceInvalidated => EngineErrorKind::OutputInvalidated,
+      OutputErrorKind::RejectedWrite | OutputErrorKind::SequenceViolation => {
+        EngineErrorKind::OutputRejectedWrite
       }
-      _ => EngineErrorKind::SinkFailure,
+      _ => EngineErrorKind::OutputFailure,
     };
     Self::new(kind, error.message())
   }
@@ -337,6 +373,8 @@ pub struct EngineSnapshot {
   pub mode: Option<ProcessingMode>,
   pub source: Option<SourceDescriptor>,
   pub render_source: Option<SourceDescriptor>,
+  #[serde(default)]
+  pub output_pair: Option<OutputPairSnapshot>,
   pub run_id: Option<u128>,
   pub session_id: Option<u128>,
   pub aec_instance_id: Option<u128>,
@@ -398,7 +436,8 @@ pub struct ProcessingTimeSnapshot {
   pub maximum_us: u64,
 }
 
-/// Engine-owned serialization of the virtual sink's versioned transport diagnostics.
+/// Engine-owned serialization of output diagnostics. The type and field names remain stable so
+/// retained schema-v2 evidence can still be analyzed.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct SinkTransportSnapshot {
   pub schema_version: u16,
@@ -415,31 +454,110 @@ pub struct SinkTransportSnapshot {
   pub underruns: u64,
   pub overflows: u64,
   pub discarded_frames: u64,
+  #[serde(default)]
+  pub current_padding_frames: u32,
+  #[serde(default)]
+  pub rendered_frames: u64,
+  #[serde(default)]
+  pub output_clock_frequency: Option<u64>,
+  #[serde(default)]
+  pub output_clock_position: Option<u64>,
+  #[serde(default)]
+  pub output_clock_qpc_position: Option<u64>,
+  #[serde(default)]
+  pub negotiated_format: Option<OutputFormatSnapshot>,
+  #[serde(default)]
+  pub converted_frames: u64,
+  #[serde(default)]
+  pub endpoint_invalidations: u64,
+  #[serde(default)]
+  pub output_failures: u64,
   pub driver_restarts: u64,
 }
 
-impl From<SinkDiagnostics> for SinkTransportSnapshot {
-  fn from(diagnostics: SinkDiagnostics) -> Self {
+impl From<OutputDiagnostics> for SinkTransportSnapshot {
+  fn from(diagnostics: OutputDiagnostics) -> Self {
     Self {
       schema_version: diagnostics.schema_version,
       state: diagnostics.state.into(),
       active_session_id: diagnostics
         .active_session
-        .map(mini_aec_transport::SessionId::get),
+        .map(mini_aec_output::SessionId::get),
       last_accepted_sequence: diagnostics.last_accepted_sequence,
       current_depth: diagnostics.current_depth,
       high_water_mark: diagnostics.high_water_mark,
       session_opens: diagnostics.counters.session_opens,
       session_closes: diagnostics.counters.session_closes,
-      session_resets: diagnostics.counters.session_resets,
+      session_resets: 0,
       accepted_frames: diagnostics.counters.accepted_frames,
       rejected_writes: diagnostics.counters.rejected_writes,
       underruns: diagnostics.counters.underruns,
       overflows: diagnostics.counters.overflows,
       discarded_frames: diagnostics.counters.discarded_frames,
-      driver_restarts: diagnostics.counters.driver_restarts,
+      current_padding_frames: diagnostics.current_padding_frames,
+      rendered_frames: diagnostics.rendered_frames,
+      output_clock_frequency: diagnostics.output_clock_frequency,
+      output_clock_position: diagnostics.output_clock_position,
+      output_clock_qpc_position: diagnostics.output_clock_qpc_position,
+      negotiated_format: diagnostics.negotiated_format.map(Into::into),
+      converted_frames: diagnostics.counters.converted_frames,
+      endpoint_invalidations: diagnostics.counters.endpoint_invalidations,
+      output_failures: diagnostics.counters.output_failures,
+      driver_restarts: 0,
     }
   }
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct OutputPairSnapshot {
+  pub cable_input_endpoint_id: String,
+  pub cable_input_friendly_name: String,
+  pub cable_output_endpoint_id: String,
+  pub cable_output_friendly_name: String,
+  pub device_family: String,
+}
+
+impl From<&OutputPair> for OutputPairSnapshot {
+  fn from(pair: &OutputPair) -> Self {
+    debug_assert_eq!(pair.playback.role, EndpointRole::Playback);
+    debug_assert_eq!(pair.recording.role, EndpointRole::Recording);
+    Self {
+      cable_input_endpoint_id: pair.playback.endpoint_id.clone(),
+      cable_input_friendly_name: pair.playback.friendly_name.clone(),
+      cable_output_endpoint_id: pair.recording.endpoint_id.clone(),
+      cable_output_friendly_name: pair.recording.friendly_name.clone(),
+      device_family: pair.playback.device_family.clone(),
+    }
+  }
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct OutputFormatSnapshot {
+  pub sample_rate_hz: u32,
+  pub channels: u16,
+  pub bits_per_sample: u16,
+  pub sample_type: OutputSampleTypeSnapshot,
+}
+
+impl From<OutputFormat> for OutputFormatSnapshot {
+  fn from(format: OutputFormat) -> Self {
+    Self {
+      sample_rate_hz: format.sample_rate_hz,
+      channels: format.channels,
+      bits_per_sample: format.bits_per_sample,
+      sample_type: match format.sample_type {
+        OutputSampleType::Integer => OutputSampleTypeSnapshot::Integer,
+        OutputSampleType::Float => OutputSampleTypeSnapshot::Float,
+      },
+    }
+  }
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum OutputSampleTypeSnapshot {
+  Integer,
+  Float,
 }
 
 /// Transport session state without exposing adapter-specific types in persisted evidence.
@@ -480,11 +598,4 @@ pub enum ValidationEventKind {
   Periodic,
   Final,
   Failed,
-}
-
-pub(crate) fn source_is_public_endpoint(source: &SourceDescriptor) -> bool {
-  source
-    .friendly_name
-    .trim()
-    .eq_ignore_ascii_case(PUBLIC_CAPTURE_ENDPOINT_NAME)
 }

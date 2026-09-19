@@ -1,0 +1,13 @@
+[package]
+name = "mini-aec-windows-output"
+description = "Windows VB-CABLE discovery and WASAPI output adapter for MiniAEC"
+edition.workspace = true
+license.workspace = true
+version.workspace = true
+
+[dependencies]
+mini-aec-output = { path = "../mini-aec-output" }
+wasapi = "0.23.0"
+
+[lints]
+workspace = true

@@ -9,7 +9,7 @@ version.workspace = true
 test-support = []
 
 [dependencies]
-mini-aec-transport = { path = "../mini-aec-transport" }
+mini-aec-output = { path = "../mini-aec-output" }
 serde = { version = "1.0.228", features = ["derive"] }
 webrtc-audio-processing = { version = "~2.1.0", features = ["bundled"] }
 

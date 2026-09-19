@@ -5,14 +5,15 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
 
-use mini_aec_transport::{
-  DiagnosticCounters, PcmFrame, SessionConfig, SessionId, SessionState, SinkDiagnostics, SinkError,
-  VirtualMicrophoneSink, WriteReceipt, DIAGNOSTICS_SCHEMA_VERSION,
+use mini_aec_output::{
+  AudioOutput, DiagnosticCounters, EndpointRole, OutputDiagnostics, OutputEndpointDescriptor,
+  OutputError, OutputPair, PcmFrame, SessionConfig, SessionId, SessionState, WriteReceipt,
+  DIAGNOSTICS_SCHEMA_VERSION,
 };
 
 use crate::{
-  AudioInput, AudioInputFactory, EchoCanceller, EchoCancellerError, EchoCancellerFactory,
-  InputRole, PacketMetadata, SourceDescriptor, SourceError, VirtualSinkFactory,
+  AudioInput, AudioInputFactory, AudioOutputFactory, EchoCanceller, EchoCancellerError,
+  EchoCancellerFactory, InputRole, PacketMetadata, SourceDescriptor, SourceError,
 };
 
 type SourceRun = Result<VecDeque<SourceStep>, SourceError>;
@@ -321,9 +322,9 @@ impl AudioInput for FakeAudioInput {
 
 #[derive(Clone, Debug, Default)]
 pub struct FakeSinkPlan {
-  pub connect_error: Option<SinkError>,
-  pub open_error: Option<SinkError>,
-  pub write_error_at: Option<(u64, SinkError)>,
+  pub connect_error: Option<OutputError>,
+  pub open_error: Option<OutputError>,
+  pub write_error_at: Option<(u64, OutputError)>,
   pub write_delay: Duration,
 }
 
@@ -371,8 +372,31 @@ impl FakeSinkFactory {
   }
 }
 
-impl VirtualSinkFactory for FakeSinkFactory {
-  fn connect(&self) -> Result<Box<dyn VirtualMicrophoneSink>, SinkError> {
+impl AudioOutputFactory for FakeSinkFactory {
+  fn resolve_pair(
+    &self,
+    cable_input_endpoint_id: &str,
+    cable_output_endpoint_id: &str,
+  ) -> Result<OutputPair, OutputError> {
+    Ok(OutputPair {
+      playback: OutputEndpointDescriptor {
+        endpoint_id: cable_input_endpoint_id.to_owned(),
+        friendly_name: "Synthetic CABLE Input".to_owned(),
+        role: EndpointRole::Playback,
+        active: true,
+        device_family: "VB-Audio Virtual Cable".to_owned(),
+      },
+      recording: OutputEndpointDescriptor {
+        endpoint_id: cable_output_endpoint_id.to_owned(),
+        friendly_name: "Synthetic CABLE Output".to_owned(),
+        role: EndpointRole::Recording,
+        active: true,
+        device_family: "VB-Audio Virtual Cable".to_owned(),
+      },
+    })
+  }
+
+  fn connect(&self, _pair: &OutputPair) -> Result<Box<dyn AudioOutput>, OutputError> {
     let plan = self
       .plans
       .lock()
@@ -402,8 +426,8 @@ struct FakeSink {
   open: bool,
 }
 
-impl VirtualMicrophoneSink for FakeSink {
-  fn open_session(&mut self, config: SessionConfig) -> Result<(), SinkError> {
+impl AudioOutput for FakeSink {
+  fn open_session(&mut self, config: SessionConfig) -> Result<(), OutputError> {
     if let Some(error) = self.plan.open_error.clone() {
       return Err(error);
     }
@@ -416,7 +440,7 @@ impl VirtualMicrophoneSink for FakeSink {
     Ok(())
   }
 
-  fn write_frame(&mut self, frame: PcmFrame<'_>) -> Result<WriteReceipt, SinkError> {
+  fn write_frame(&mut self, frame: PcmFrame<'_>) -> Result<WriteReceipt, OutputError> {
     if let Some((sequence, error)) = &self.plan.write_error_at {
       if frame.sequence() == *sequence {
         return Err(error.clone());
@@ -434,10 +458,10 @@ impl VirtualMicrophoneSink for FakeSink {
     Ok(WriteReceipt::accepted(frame.sequence()))
   }
 
-  fn diagnostics(&self) -> Result<SinkDiagnostics, SinkError> {
+  fn diagnostics(&self) -> Result<OutputDiagnostics, OutputError> {
     let record = self.record.lock().expect("fake session record lock");
     let accepted_frames = record.accepted.len() as u64;
-    Ok(SinkDiagnostics {
+    Ok(OutputDiagnostics {
       schema_version: DIAGNOSTICS_SCHEMA_VERSION,
       state: if self.open {
         SessionState::Open
@@ -454,10 +478,11 @@ impl VirtualMicrophoneSink for FakeSink {
         accepted_frames,
         ..DiagnosticCounters::default()
       },
+      ..OutputDiagnostics::default()
     })
   }
 
-  fn close_session(&mut self) -> Result<(), SinkError> {
+  fn close_session(&mut self) -> Result<(), OutputError> {
     if self.open {
       self
         .record

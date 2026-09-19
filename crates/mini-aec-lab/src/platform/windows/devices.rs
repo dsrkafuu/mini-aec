@@ -12,6 +12,9 @@ struct DeviceReport {
 struct DeviceInfo {
   id: String,
   name: String,
+  interface_name: Option<String>,
+  description: Option<String>,
+  vb_audio_metadata: bool,
   state: String,
   default_roles: Vec<String>,
   format: Option<FormatInfo>,
@@ -83,6 +86,12 @@ fn device_info(device: &Device, default_ids: &[(Role, String)]) -> Result<Device
   let name = device
     .get_friendlyname()
     .context("failed to read device friendly name")?;
+  let interface_name = device.get_interface_friendlyname().ok();
+  let description = device.get_description().ok();
+  let vb_audio_metadata = interface_name
+    .iter()
+    .chain(description.iter())
+    .any(|value| value.to_ascii_lowercase().contains("vb-audio"));
   let state = device
     .get_state()
     .context("failed to read device state")?
@@ -118,6 +127,9 @@ fn device_info(device: &Device, default_ids: &[(Role, String)]) -> Result<Device
   Ok(DeviceInfo {
     id,
     name,
+    interface_name,
+    description,
+    vb_audio_metadata,
     state,
     default_roles,
     format,
@@ -136,6 +148,15 @@ fn print_group(title: &str, devices: &[DeviceInfo]) {
     };
     println!("- {}{}", device.name, defaults);
     println!("  id: {}", device.id);
+    println!(
+      "  interface: {}",
+      device.interface_name.as_deref().unwrap_or("unavailable")
+    );
+    println!(
+      "  description: {}",
+      device.description.as_deref().unwrap_or("unavailable")
+    );
+    println!("  VB-Audio metadata: {}", device.vb_audio_metadata);
     println!("  state: {}", device.state);
 
     if let Some(format) = &device.format {

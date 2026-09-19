@@ -2,7 +2,7 @@ use std::collections::VecDeque;
 use std::sync::{Condvar, Mutex};
 use std::time::Duration;
 
-use mini_aec_transport::FRAME_SAMPLES;
+use mini_aec_output::FRAME_SAMPLES;
 
 use crate::PacketMetadata;
 

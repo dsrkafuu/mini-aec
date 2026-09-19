@@ -12,6 +12,8 @@ pub struct BypassConfig {
   pub duration: Duration,
   pub output_root: PathBuf,
   pub microphone_endpoint_id: String,
+  pub cable_input_endpoint_id: String,
+  pub cable_output_endpoint_id: String,
 }
 
 pub struct RealtimeAecConfig {
@@ -19,6 +21,8 @@ pub struct RealtimeAecConfig {
   pub output_root: PathBuf,
   pub microphone_endpoint_id: String,
   pub render_endpoint_id: String,
+  pub cable_input_endpoint_id: String,
+  pub cable_output_endpoint_id: String,
 }
 
 #[cfg(windows)]

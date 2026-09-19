@@ -1,4 +1,4 @@
-use mini_aec_transport::FRAME_SAMPLES;
+use mini_aec_output::FRAME_SAMPLES;
 
 use crate::PacketMetadata;
 
@@ -70,7 +70,7 @@ pub(crate) fn pcm16(sample: f32) -> (i16, bool) {
 
 #[cfg(test)]
 mod tests {
-  use mini_aec_transport::FRAME_SAMPLES;
+  use mini_aec_output::FRAME_SAMPLES;
 
   use super::{pcm16, FrameAccumulator};
   use crate::PacketMetadata;

@@ -1,5 +1,7 @@
 # MiniAEC Microphone driver boundary
 
+> Legacy development evidence only. OpenSpec change `adopt-vb-cable-output` retires this project-owned SysVAD path; it is not a supported product dependency, release path, installer, or signing strategy. The active product writes processed PCM to separately installed VB-CABLE `CABLE Input`, and target applications consume `CABLE Output`. Do not build, sign, install, restart, or remove this driver for current MiniAEC work. The directory is retained only until replacement acceptance permits source cleanup.
+
 This directory contains the Windows 11 x64 validation driver for the single public capture endpoint `MiniAEC Microphone`. It is derived from the pinned Microsoft SysVAD snapshot recorded in [`UPSTREAM.md`](UPSTREAM.md); the validation package is development-only and is not a production installer or signing path.
 
 ## Current validation status

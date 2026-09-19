@@ -2,16 +2,16 @@
 
 ## Purpose
 
-Define how MiniAEC captures, analyzes, and accepts metadata-only evidence for sustained real-time audio stability so clock-drift correction is introduced only when the existing product path demonstrates a repeatable need.
+Define how MiniAEC captures, analyzes and accepts metadata-only evidence for sustained real-time audio stability through the supported paired VB-CABLE output route.
 
 ## Requirements
 
 ### Requirement: Monotonic long-run evidence
-The system SHALL record a versioned metadata-only event stream for a configured real-time AEC run that identifies the exact physical microphone and render endpoints, the requested duration, monotonic elapsed time, lifecycle state, synchronization epoch, per-input device position and QPC timestamp, synchronization delta, queue and discard counters, AEC recovery and processing counters, and virtual microphone transport counters without recording PCM or meeting content.
+The system SHALL record a versioned metadata-only event stream for a configured real-time AEC run that identifies the exact physical microphone, physical render and paired VB-CABLE endpoints, the requested duration, monotonic elapsed time, lifecycle state, synchronization epoch, per-input device position and QPC timestamp, synchronization delta, queue and discard counters, AEC recovery and processing counters, and VB-CABLE output counters without recording PCM or meeting content.
 
 #### Scenario: Long-run recording starts
-- **WHEN** a long-run run starts with exact active physical microphone and render endpoint IDs and an available `MiniAEC Microphone` sink
-- **THEN** the evidence begins with a started event containing a new run, synchronization, AEC, and sink-session identity and a zero-based monotonic elapsed time
+- **WHEN** a long-run run starts with exact active physical microphone and render endpoint IDs and an available supported VB-CABLE pair
+- **THEN** the evidence begins with a started event containing a new run, synchronization, AEC and output-session identity plus a zero-based monotonic elapsed time
 - **THEN** periodic events are recorded outside real-time workers at the documented bounded interval until the run stops or fails
 
 #### Scenario: Long-run recording completes
@@ -53,18 +53,18 @@ The system SHALL classify an analyzable run as `bounded-synchronizer-sufficient`
 - **THEN** the report returns `inconclusive` and identifies the additional measurement needed rather than choosing a favorable disposition
 
 ### Requirement: Thirty-minute characterization gate
-The project SHALL provide a documented 30-minute characterization gate for the K7 physical microphone and the current active Realtek speakers physical render endpoint through the frozen default AEC3 path and `MiniAEC Microphone`, with an ordinary capture client consuming the public endpoint for the scored interval.
+The project SHALL provide a documented 30-minute characterization gate for the K7 physical microphone and the current active Realtek speakers physical render endpoint through the frozen default AEC3 path, with MiniAEC rendering to the supported `CABLE Input` endpoint and an ordinary capture client continuously consuming its paired `CABLE Output` for the scored interval.
 
 #### Scenario: Characterization run is valid
-- **WHEN** the exact target endpoints remain active, render packets are present for the drift-scored interval, `MiniAEC Microphone` is continuously consumed, at least 30 minutes of required evidence is captured, and observation coverage satisfies the documented threshold
+- **WHEN** the exact physical endpoints and VB-CABLE pair remain active, render packets are present for the drift-scored interval, `CABLE Output` is continuously consumed, at least 30 minutes of required evidence is captured and observation coverage satisfies the documented threshold
 - **THEN** the analyzer produces a conclusive drift disposition and a separate functional-stability result
 
 #### Scenario: Functional stability passes
-- **WHEN** the scored interval completes without terminal engine failure, unexplained discontinuity or reset, stale-audio replay, rejected sink write, sink failure, invalid AEC output, processing deadline miss, growing queue depth, or unaccounted client interruption
-- **THEN** the report marks the 30-minute functional-stability gate passed while preserving every nonzero bounded degradation and transport counter for review
+- **WHEN** the scored interval completes without terminal engine failure, unexplained discontinuity or reset, stale-audio submission, output failure, invalid AEC output, processing deadline miss, growing queue depth or unaccounted client interruption
+- **THEN** the report marks the 30-minute functional-stability gate passed while preserving every nonzero bounded degradation and output counter for review
 
 #### Scenario: Functional stability fails
-- **WHEN** the engine terminates early or any required continuity, safety, boundedness, or client-consumption condition is violated
+- **WHEN** the engine terminates early or any required continuity, safety, boundedness, output or client-consumption condition is violated
 - **THEN** the report marks the functional-stability gate failed independently of the clock-drift disposition and identifies the first failing condition plus supporting counters
 
 ### Requirement: Thirty-minute acceptance and evidence-triggered reassessment
@@ -83,16 +83,16 @@ The project SHALL treat a conclusive 30-minute target-hardware result as the fin
 - **THEN** a separate change defines the evidence scope and duration of any extended validation or correction instead of applying an unconditional two-hour gate retroactively
 
 ### Requirement: Private and non-mutating validation boundary
-The system SHALL keep raw long-run events, reports, endpoint identities, and any associated private recordings below ignored `artifacts/` or an existing ignored driver-validation output root, and analysis SHALL NOT install, update, restart, or remove drivers or devices, modify certificates or boot configuration, change Windows default audio roles, upload evidence, or initiate a system restart.
+The system SHALL keep raw long-run events, reports, endpoint identities and any associated private recordings below ignored `artifacts/`, and analysis SHALL NOT install, update, restart or remove drivers or devices, modify certificates or boot configuration, change Windows default audio roles, upload evidence or initiate a system restart.
 
 #### Scenario: Analysis runs on retained evidence
 - **WHEN** the report command reads a previously captured event stream
-- **THEN** it performs no audio-device, driver, certificate, boot, default-role, network, or PCM mutation and writes generated output only below an approved ignored evidence root
+- **THEN** it performs no audio-device, driver, certificate, boot, default-role, network or PCM mutation and writes generated output only below an approved ignored evidence root
 
 #### Scenario: Installed product path is unavailable
-- **WHEN** a requested real-device gate lacks an installed and authorized `MiniAEC Microphone` development package
-- **THEN** the validation stops with an actionable prerequisite and does not attempt installation, signing, device activation, or system restart
+- **WHEN** a requested real-device gate lacks an installed supported VB-CABLE pair
+- **THEN** the validation stops with an actionable prerequisite and does not attempt download, installation, signing, device activation or system restart
 
 #### Scenario: Redistributable synthetic evidence is tested
-- **WHEN** automated tests exercise rate estimation, discontinuities, insufficient data, drift classification, and functional failure
+- **WHEN** automated tests exercise rate estimation, discontinuities, insufficient data, drift classification and functional failure
 - **THEN** they use synthetic metadata without private recordings or Windows system mutation

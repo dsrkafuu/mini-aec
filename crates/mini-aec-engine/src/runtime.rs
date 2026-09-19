@@ -4,7 +4,7 @@ use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use mini_aec_transport::{PcmFrame, SessionConfig, SessionId, VirtualMicrophoneSink};
+use mini_aec_output::{AudioOutput, OutputPair, PcmFrame, SessionConfig, SessionId};
 
 use crate::framing::FrameAccumulator;
 use crate::queue::{FrameQueue, PopResult, QueueMetrics};
@@ -13,10 +13,9 @@ use crate::synchronization::{
   HEALTHY_RECOVERY_FRAMES, MAXIMUM_SKEW_100NS, MAX_CONSECUTIVE_RENDER_MISSES,
 };
 use crate::{
-  source_is_public_endpoint, AudioInputFactory, DegradationReason, EchoCancellerFactory,
-  EngineCommand, EngineConfig, EngineError, EngineErrorKind, EngineSnapshot, EngineState,
-  InputRole, ProcessingMode, ProcessingTimeSnapshot, SourceDescriptor, VirtualSinkFactory,
-  INPUT_WAIT,
+  AudioInputFactory, AudioOutputFactory, DegradationReason, EchoCancellerFactory, EngineCommand,
+  EngineConfig, EngineError, EngineErrorKind, EngineSnapshot, EngineState, InputRole,
+  OutputPairSnapshot, ProcessingMode, ProcessingTimeSnapshot, SourceDescriptor, INPUT_WAIT,
 };
 
 const START_TIMEOUT: Duration = Duration::from_secs(5);
@@ -96,7 +95,7 @@ struct RunHandles {
 /// Controller for one reusable physical-microphone bypass engine.
 pub struct Engine {
   source_factory: Arc<dyn AudioInputFactory>,
-  sink_factory: Arc<dyn VirtualSinkFactory>,
+  sink_factory: Arc<dyn AudioOutputFactory>,
   echo_factory: Option<Arc<dyn EchoCancellerFactory>>,
   shared: Arc<Shared>,
   run: Mutex<Option<RunHandles>>,
@@ -106,7 +105,7 @@ impl Engine {
   #[must_use]
   pub fn new(
     source_factory: Arc<dyn AudioInputFactory>,
-    sink_factory: Arc<dyn VirtualSinkFactory>,
+    sink_factory: Arc<dyn AudioOutputFactory>,
   ) -> Self {
     Self {
       source_factory,
@@ -124,7 +123,7 @@ impl Engine {
   #[must_use]
   pub fn new_with_aec(
     source_factory: Arc<dyn AudioInputFactory>,
-    sink_factory: Arc<dyn VirtualSinkFactory>,
+    sink_factory: Arc<dyn AudioOutputFactory>,
     echo_factory: Arc<dyn EchoCancellerFactory>,
   ) -> Self {
     let mut engine = Self::new(source_factory, sink_factory);
@@ -169,8 +168,32 @@ impl Engine {
     reason = "the public controller consumes one explicit run configuration as a command value"
   )]
   pub fn start(&self, config: EngineConfig) -> Result<(), EngineError> {
+    let cable_input_endpoint_id = config.cable_input_endpoint_id.trim();
+    let cable_output_endpoint_id = config.cable_output_endpoint_id.trim();
+    if cable_input_endpoint_id.is_empty() || cable_output_endpoint_id.is_empty() {
+      return Err(EngineError::new(
+        EngineErrorKind::InvalidConfiguration,
+        "exact CABLE Input and CABLE Output endpoint IDs are required",
+      ));
+    }
+    if config.microphone_endpoint_id.trim() == cable_output_endpoint_id {
+      return Err(EngineError::new(
+        EngineErrorKind::InvalidSource,
+        "CABLE Output cannot be selected as the physical microphone",
+      ));
+    }
+    if config.render_endpoint_id.as_deref().map(str::trim) == Some(cable_input_endpoint_id) {
+      return Err(EngineError::new(
+        EngineErrorKind::InvalidSource,
+        "CABLE Input cannot be selected as the physical render-loopback reference",
+      ));
+    }
+    let output_pair = self
+      .sink_factory
+      .resolve_pair(cable_input_endpoint_id, cable_output_endpoint_id)
+      .map_err(|error| EngineError::from_output(&error))?;
     match config.mode {
-      ProcessingMode::Bypass => self.start_bypass(&config.microphone_endpoint_id),
+      ProcessingMode::Bypass => self.start_bypass(&config.microphone_endpoint_id, output_pair),
       ProcessingMode::Aec => {
         let render_endpoint_id = config.render_endpoint_id.as_deref().ok_or_else(|| {
           EngineError::new(
@@ -178,7 +201,11 @@ impl Engine {
             "an exact physical render endpoint ID is required for AEC mode",
           )
         })?;
-        self.start_aec(&config.microphone_endpoint_id, render_endpoint_id)
+        self.start_aec(
+          &config.microphone_endpoint_id,
+          render_endpoint_id,
+          output_pair,
+        )
       }
     }
   }
@@ -187,7 +214,11 @@ impl Engine {
     clippy::too_many_lines,
     reason = "bypass startup keeps source and sink readiness plus paired cleanup visible"
   )]
-  fn start_bypass(&self, source_endpoint_id: &str) -> Result<(), EngineError> {
+  fn start_bypass(
+    &self,
+    source_endpoint_id: &str,
+    output_pair: OutputPair,
+  ) -> Result<(), EngineError> {
     if source_endpoint_id.trim().is_empty() {
       return Err(EngineError::new(
         EngineErrorKind::InvalidConfiguration,
@@ -231,6 +262,7 @@ impl Engine {
         state: EngineState::Starting,
         mode: Some(ProcessingMode::Bypass),
         source: Some(source.clone()),
+        output_pair: Some(OutputPairSnapshot::from(&output_pair)),
         run_id: Some(run_id),
         session_id: Some(session_value),
         ..EngineSnapshot::default()
@@ -243,6 +275,7 @@ impl Engine {
     let (sink_ready_tx, sink_ready_rx) = mpsc::sync_channel(1);
     let sink = spawn_sink_worker(
       Arc::clone(&self.sink_factory),
+      output_pair,
       session_id,
       Arc::clone(&queue),
       Arc::clone(&self.shared),
@@ -310,6 +343,7 @@ impl Engine {
     &self,
     microphone_endpoint_id: &str,
     render_endpoint_id: &str,
+    output_pair: OutputPair,
   ) -> Result<(), EngineError> {
     if microphone_endpoint_id.trim().is_empty() || render_endpoint_id.trim().is_empty() {
       return Err(EngineError::new(
@@ -375,6 +409,7 @@ impl Engine {
         mode: Some(ProcessingMode::Aec),
         source: Some(microphone.clone()),
         render_source: Some(render.clone()),
+        output_pair: Some(OutputPairSnapshot::from(&output_pair)),
         run_id: Some(run_id),
         session_id: Some(session_value),
         aec_instance_id: Some(aec_instance_id),
@@ -422,6 +457,7 @@ impl Engine {
     let (processing_ready_tx, processing_ready_rx) = mpsc::sync_channel(1);
     handles.processing = Some(spawn_aec_processing_worker(
       Arc::clone(&self.sink_factory),
+      output_pair,
       echo_factory,
       session_id,
       Arc::clone(&microphone_queue),
@@ -586,50 +622,55 @@ fn validate_source(
       format!("capture endpoint {:?} is not active", source.friendly_name),
     ));
   }
-  if role == InputRole::Microphone && source_is_public_endpoint(source) {
-    return Err(EngineError::new(
-      EngineErrorKind::InvalidSource,
-      "MiniAEC Microphone cannot be selected as its own physical source",
-    ));
-  }
   Ok(())
 }
 
 fn spawn_sink_worker(
-  factory: Arc<dyn VirtualSinkFactory>,
+  factory: Arc<dyn AudioOutputFactory>,
+  output_pair: OutputPair,
   session_id: SessionId,
   queue: Arc<FrameQueue>,
   shared: Arc<Shared>,
   ready: mpsc::SyncSender<Result<(), EngineError>>,
 ) -> Result<JoinHandle<()>, EngineError> {
   thread::Builder::new()
-    .name("mini-aec-sink".to_owned())
-    .spawn(move || sink_worker(factory.as_ref(), session_id, &queue, &shared, &ready))
+    .name("mini-aec-output".to_owned())
+    .spawn(move || {
+      sink_worker(
+        factory.as_ref(),
+        &output_pair,
+        session_id,
+        &queue,
+        &shared,
+        &ready,
+      );
+    })
     .map_err(|error| {
       EngineError::new(
         EngineErrorKind::WorkerFailure,
-        format!("failed to spawn virtual sink worker: {error}"),
+        format!("failed to spawn output worker: {error}"),
       )
     })
 }
 
 fn sink_worker(
-  factory: &dyn VirtualSinkFactory,
+  factory: &dyn AudioOutputFactory,
+  output_pair: &OutputPair,
   session_id: SessionId,
   queue: &FrameQueue,
   shared: &Shared,
   ready: &mpsc::SyncSender<Result<(), EngineError>>,
 ) {
-  let mut sink = match factory.connect() {
+  let mut sink = match factory.connect(output_pair) {
     Ok(sink) => sink,
     Err(error) => {
-      let error = EngineError::from_sink(&error);
+      let error = EngineError::from_output(&error);
       let _ = ready.send(Err(error));
       return;
     }
   };
   if let Err(error) = sink.open_session(SessionConfig::new(session_id)) {
-    let error = EngineError::from_sink(&error);
+    let error = EngineError::from_output(&error);
     let _ = ready.send(Err(error));
     return;
   }
@@ -641,7 +682,7 @@ fn sink_worker(
       snapshot.sink_diagnostics_latest = Some(diagnostics);
     }
     Err(error) => {
-      let error = EngineError::from_sink(&error);
+      let error = EngineError::from_output(&error);
       let _ = sink.close_session();
       let _ = ready.send(Err(error));
       return;
@@ -683,7 +724,7 @@ fn sink_worker(
               .lock()
               .expect("engine snapshot lock")
               .sink_failures += 1;
-            shared.record_failure(EngineError::from_sink(&error), queue);
+            shared.record_failure(EngineError::from_output(&error), queue);
             break;
           }
         }
@@ -691,6 +732,15 @@ fn sink_worker(
       PopResult::Timeout => {}
       PopResult::Finished => break,
     }
+  }
+
+  if let Err(error) = sink.close_session() {
+    shared
+      .snapshot
+      .lock()
+      .expect("engine snapshot lock")
+      .sink_failures += 1;
+    shared.record_failure(EngineError::from_output(&error), queue);
   }
 
   if let Err(error) = refresh_sink_diagnostics(sink.as_ref(), shared) {
@@ -703,24 +753,12 @@ fn sink_worker(
       shared.record_failure(error, queue);
     }
   }
-
-  if let Err(error) = sink.close_session() {
-    shared
-      .snapshot
-      .lock()
-      .expect("engine snapshot lock")
-      .sink_failures += 1;
-    shared.record_failure(EngineError::from_sink(&error), queue);
-  }
 }
 
-fn refresh_sink_diagnostics(
-  sink: &dyn VirtualMicrophoneSink,
-  shared: &Shared,
-) -> Result<(), EngineError> {
+fn refresh_sink_diagnostics(sink: &dyn AudioOutput, shared: &Shared) -> Result<(), EngineError> {
   let diagnostics = sink
     .diagnostics()
-    .map_err(|error| EngineError::from_sink(&error))?;
+    .map_err(|error| EngineError::from_output(&error))?;
   shared
     .snapshot
     .lock()
@@ -987,8 +1025,13 @@ fn update_input_frame_snapshot(
   }
 }
 
+#[allow(
+  clippy::too_many_arguments,
+  reason = "the worker boundary passes explicit owned dependencies and bounded queues"
+)]
 fn spawn_aec_processing_worker(
-  sink_factory: Arc<dyn VirtualSinkFactory>,
+  sink_factory: Arc<dyn AudioOutputFactory>,
+  output_pair: OutputPair,
   echo_factory: Arc<dyn EchoCancellerFactory>,
   session_id: SessionId,
   microphone_queue: Arc<TimedFrameQueue>,
@@ -1001,6 +1044,7 @@ fn spawn_aec_processing_worker(
     .spawn(move || {
       aec_processing_worker(
         sink_factory.as_ref(),
+        &output_pair,
         echo_factory.as_ref(),
         session_id,
         &microphone_queue,
@@ -1018,11 +1062,13 @@ fn spawn_aec_processing_worker(
 }
 
 #[allow(
+  clippy::too_many_arguments,
   clippy::too_many_lines,
   reason = "the real-time processing loop keeps pairing, recovery, sink sequencing and cleanup together"
 )]
 fn aec_processing_worker(
-  sink_factory: &dyn VirtualSinkFactory,
+  sink_factory: &dyn AudioOutputFactory,
+  output_pair: &OutputPair,
   echo_factory: &dyn EchoCancellerFactory,
   session_id: SessionId,
   microphone_queue: &TimedFrameQueue,
@@ -1030,15 +1076,15 @@ fn aec_processing_worker(
   shared: &Shared,
   ready: &mpsc::SyncSender<Result<(), EngineError>>,
 ) {
-  let mut sink = match sink_factory.connect() {
+  let mut sink = match sink_factory.connect(output_pair) {
     Ok(sink) => sink,
     Err(error) => {
-      let _ = ready.send(Err(EngineError::from_sink(&error)));
+      let _ = ready.send(Err(EngineError::from_output(&error)));
       return;
     }
   };
   if let Err(error) = sink.open_session(SessionConfig::new(session_id)) {
-    let _ = ready.send(Err(EngineError::from_sink(&error)));
+    let _ = ready.send(Err(EngineError::from_output(&error)));
     return;
   }
   if let Err(error) = refresh_sink_diagnostics(sink.as_ref(), shared) {
@@ -1201,7 +1247,7 @@ fn aec_processing_worker(
     }
 
     let started = Instant::now();
-    let mut output = [0.0_f32; mini_aec_transport::FRAME_SAMPLES];
+    let mut output = [0.0_f32; mini_aec_output::FRAME_SAMPLES];
     let process_result = echo.process(&render_samples, &microphone_frame.samples, &mut output);
     let invalid_output = output.iter().any(|sample| !sample.is_finite());
     if process_result.is_err() || invalid_output {
@@ -1256,7 +1302,7 @@ fn aec_processing_worker(
       }
     }
 
-    let mut pcm = [0_i16; mini_aec_transport::FRAME_SAMPLES];
+    let mut pcm = [0_i16; mini_aec_output::FRAME_SAMPLES];
     for (destination, sample) in pcm.iter_mut().zip(output) {
       *destination = crate::framing::pcm16(sample).0;
     }
@@ -1267,7 +1313,7 @@ fn aec_processing_worker(
         .expect("engine snapshot lock")
         .sink_failures += 1;
       shared.record_aec_failure(
-        EngineError::from_sink(&error),
+        EngineError::from_output(&error),
         microphone_queue,
         render_queue,
       );
@@ -1291,7 +1337,7 @@ fn aec_processing_worker(
   if let Err(error) = sink.close_session() {
     if !shared.terminal_failure.load(Ordering::Acquire) {
       shared.record_aec_failure(
-        EngineError::from_sink(&error),
+        EngineError::from_output(&error),
         microphone_queue,
         render_queue,
       );
@@ -1307,7 +1353,7 @@ fn select_render_frame(
   shared: &Shared,
   echo_factory: &dyn EchoCancellerFactory,
   echo: &mut Box<dyn crate::EchoCanceller>,
-) -> Result<([f32; mini_aec_transport::FRAME_SAMPLES], bool, Option<i64>), EngineError> {
+) -> Result<([f32; mini_aec_output::FRAME_SAMPLES], bool, Option<i64>), EngineError> {
   if render.is_none() {
     *render = if *render_wait_exhausted {
       render_queue.try_pop()
@@ -1348,16 +1394,16 @@ fn select_render_frame(
       continue;
     }
     if delta.unsigned_abs() > MAXIMUM_SKEW_100NS {
-      return Ok(([0.0; mini_aec_transport::FRAME_SAMPLES], false, Some(delta)));
+      return Ok(([0.0; mini_aec_output::FRAME_SAMPLES], false, Some(delta)));
     }
     if delta <= ALIGNMENT_TOLERANCE_100NS.cast_signed() {
       *render = render_queue.try_pop();
       *render_wait_exhausted = false;
       return Ok((candidate.samples, true, Some(delta)));
     }
-    return Ok(([0.0; mini_aec_transport::FRAME_SAMPLES], false, Some(delta)));
+    return Ok(([0.0; mini_aec_output::FRAME_SAMPLES], false, Some(delta)));
   }
-  Ok(([0.0; mini_aec_transport::FRAME_SAMPLES], false, None))
+  Ok(([0.0; mini_aec_output::FRAME_SAMPLES], false, None))
 }
 
 fn rebuild_echo(
@@ -1537,7 +1583,7 @@ mod tests {
   use std::thread;
   use std::time::{Duration, Instant};
 
-  use mini_aec_transport::{SinkError, SinkErrorKind, FRAME_SAMPLES};
+  use mini_aec_output::{OutputError, OutputErrorKind, FRAME_SAMPLES};
 
   use super::Engine;
   use crate::test_support::{
@@ -1622,7 +1668,11 @@ mod tests {
     let engine = engine(&source, &sink);
 
     engine
-      .start(EngineConfig::new("physical-id"))
+      .start(EngineConfig::new(
+        "physical-id",
+        "cable-input-id",
+        "cable-output-id",
+      ))
       .expect("engine starts");
     assert_eq!(engine.snapshot().state, EngineState::RunningBypass);
     wait_for(|| engine.snapshot().sink_accepted_frames == 1);
@@ -1654,7 +1704,11 @@ mod tests {
     let engine = engine(&source, &sink);
 
     let error = engine
-      .start(EngineConfig::new("physical-id"))
+      .start(EngineConfig::new(
+        "physical-id",
+        "cable-input-id",
+        "cable-output-id",
+      ))
       .expect_err("source startup fails");
     assert_eq!(error.kind, EngineErrorKind::SourceAccessDenied);
     assert_eq!(engine.snapshot().state, EngineState::Failed);
@@ -1664,45 +1718,74 @@ mod tests {
   }
 
   #[test]
-  fn recursive_source_is_rejected_before_sink_connection() {
-    let mut source_descriptor = descriptor();
-    source_descriptor.friendly_name = crate::PUBLIC_CAPTURE_ENDPOINT_NAME.to_owned();
-    let source = FakeAudioInputFactory::new(source_descriptor);
+  fn cable_output_is_rejected_as_microphone_before_sink_connection() {
+    let source = FakeAudioInputFactory::new(descriptor());
     let sink = FakeSinkFactory::default();
     let engine = engine(&source, &sink);
     let error = engine
-      .start(EngineConfig::new("physical-id"))
-      .expect_err("recursive source is rejected");
+      .start(EngineConfig::new(
+        "cable-output-id",
+        "cable-input-id",
+        "cable-output-id",
+      ))
+      .expect_err("feedback source is rejected");
     assert_eq!(error.kind, EngineErrorKind::InvalidSource);
     assert!(sink.records().is_empty());
   }
 
   #[test]
-  fn sink_categories_remain_actionable() {
+  fn cable_input_is_rejected_as_render_before_source_or_output_open() {
+    let source = FakeAudioInputFactory::new(descriptor()).with_render(render_descriptor());
+    let sink = FakeSinkFactory::default();
+    let echo = FakeEchoCancellerFactory::default();
+    let engine = aec_engine(&source, &sink, &echo);
+    let error = engine
+      .start(EngineConfig::aec(
+        "physical-id",
+        "cable-input-id",
+        "cable-input-id",
+        "cable-output-id",
+      ))
+      .expect_err("post-AEC feedback reference is rejected");
+    assert_eq!(error.kind, EngineErrorKind::InvalidSource);
+    assert_eq!(source.stop_count(), 0);
+    assert!(sink.records().is_empty());
+    assert!(echo.records().is_empty());
+  }
+
+  #[test]
+  fn output_categories_remain_actionable() {
     for (sink_kind, engine_kind) in [
       (
-        SinkErrorKind::DriverUnavailable,
-        EngineErrorKind::DriverUnavailable,
+        OutputErrorKind::PrerequisiteMissing,
+        EngineErrorKind::OutputPrerequisiteMissing,
       ),
       (
-        SinkErrorKind::AccessDenied,
-        EngineErrorKind::SinkAccessDenied,
+        OutputErrorKind::AccessDenied,
+        EngineErrorKind::OutputAccessDenied,
       ),
-      (SinkErrorKind::Busy, EngineErrorKind::SenderBusy),
       (
-        SinkErrorKind::VersionMismatch,
-        EngineErrorKind::VersionMismatch,
+        OutputErrorKind::DeviceInvalidated,
+        EngineErrorKind::OutputInvalidated,
+      ),
+      (
+        OutputErrorKind::RejectedWrite,
+        EngineErrorKind::OutputRejectedWrite,
       ),
     ] {
       let source = FakeAudioInputFactory::new(descriptor());
       let sink = FakeSinkFactory::default();
       sink.push_plan(FakeSinkPlan {
-        connect_error: Some(SinkError::new(sink_kind, "scripted sink failure")),
+        connect_error: Some(OutputError::new(sink_kind, "scripted sink failure")),
         ..FakeSinkPlan::default()
       });
       let engine = engine(&source, &sink);
       let error = engine
-        .start(EngineConfig::new("physical-id"))
+        .start(EngineConfig::new(
+          "physical-id",
+          "cable-input-id",
+          "cable-output-id",
+        ))
         .expect_err("sink startup fails");
       assert_eq!(error.kind, engine_kind);
       assert_eq!(engine.snapshot().state, EngineState::Failed);
@@ -1725,7 +1808,11 @@ mod tests {
     let engine = engine(&source, &sink);
 
     engine
-      .start(EngineConfig::new("physical-id"))
+      .start(EngineConfig::new(
+        "physical-id",
+        "cable-input-id",
+        "cable-output-id",
+      ))
       .expect("first run starts");
     wait_for(|| engine.snapshot().state == EngineState::Failed);
     let first = engine.snapshot();
@@ -1735,7 +1822,11 @@ mod tests {
     );
 
     engine
-      .start(EngineConfig::new("physical-id"))
+      .start(EngineConfig::new(
+        "physical-id",
+        "cable-input-id",
+        "cable-output-id",
+      ))
       .expect("explicit second start recovers");
     wait_for(|| engine.snapshot().sink_accepted_frames == 1);
     let second = engine.snapshot();
@@ -1766,7 +1857,11 @@ mod tests {
     });
     let engine = engine(&source, &sink);
     engine
-      .start(EngineConfig::new("physical-id"))
+      .start(EngineConfig::new(
+        "physical-id",
+        "cable-input-id",
+        "cable-output-id",
+      ))
       .expect("engine starts");
     wait_for(|| engine.snapshot().output_frames == 100);
     engine.stop().expect("engine drains and stops");
@@ -1795,12 +1890,19 @@ mod tests {
     }]);
     let sink = FakeSinkFactory::default();
     sink.push_plan(FakeSinkPlan {
-      write_error_at: Some((2, SinkError::new(SinkErrorKind::RejectedWrite, "rejected"))),
+      write_error_at: Some((
+        2,
+        OutputError::new(OutputErrorKind::RejectedWrite, "rejected"),
+      )),
       ..FakeSinkPlan::default()
     });
     let engine = engine(&source, &sink);
     engine
-      .start(EngineConfig::new("physical-id"))
+      .start(EngineConfig::new(
+        "physical-id",
+        "cable-input-id",
+        "cable-output-id",
+      ))
       .expect("engine starts");
     wait_for(|| engine.snapshot().state == EngineState::Failed);
     let snapshot = engine.snapshot();
@@ -1808,7 +1910,7 @@ mod tests {
     assert_eq!(snapshot.sink_failures, 1);
     assert_eq!(
       snapshot.last_error.as_ref().map(|error| error.kind),
-      Some(EngineErrorKind::RejectedWrite)
+      Some(EngineErrorKind::OutputRejectedWrite)
     );
     engine.stop().expect("failed run cleans up");
   }
@@ -1828,7 +1930,11 @@ mod tests {
     let sink = FakeSinkFactory::default();
     let engine = engine(&source, &sink);
     engine
-      .start(EngineConfig::new("physical-id"))
+      .start(EngineConfig::new(
+        "physical-id",
+        "cable-input-id",
+        "cable-output-id",
+      ))
       .expect("soak starts");
     wait_for(|| engine.snapshot().output_frames == FIVE_MINUTE_FRAMES);
     engine.stop().expect("soak stops");
@@ -1866,7 +1972,12 @@ mod tests {
     let engine = aec_engine(&source, &sink, &echo);
 
     engine
-      .start(EngineConfig::aec("physical-id", "render-id"))
+      .start(EngineConfig::aec(
+        "physical-id",
+        "render-id",
+        "cable-input-id",
+        "cable-output-id",
+      ))
       .expect("AEC starts");
     assert_eq!(engine.snapshot().state, EngineState::RunningAec);
     wait_for(|| engine.snapshot().sink_accepted_frames == 2);
@@ -1891,7 +2002,12 @@ mod tests {
     let engine = aec_engine(&source, &sink, &echo);
 
     engine
-      .start(EngineConfig::aec("physical-id", "render-id"))
+      .start(EngineConfig::aec(
+        "physical-id",
+        "render-id",
+        "cable-input-id",
+        "cable-output-id",
+      ))
       .expect("AEC starts");
     wait_for(|| engine.snapshot().silent_render_references >= 1);
     let snapshot = engine.snapshot();
@@ -1914,7 +2030,12 @@ mod tests {
     let engine = aec_engine(&source, &sink, &echo);
 
     engine
-      .start(EngineConfig::aec("physical-id", "render-id"))
+      .start(EngineConfig::aec(
+        "physical-id",
+        "render-id",
+        "cable-input-id",
+        "cable-output-id",
+      ))
       .expect("AEC starts");
     wait_for(|| engine.snapshot().sink_accepted_frames == 2);
     engine.stop().expect("AEC stops");
@@ -1946,7 +2067,12 @@ mod tests {
     let engine = aec_engine(&source, &sink, &echo);
 
     engine
-      .start(EngineConfig::aec("physical-id", "render-id"))
+      .start(EngineConfig::aec(
+        "physical-id",
+        "render-id",
+        "cable-input-id",
+        "cable-output-id",
+      ))
       .expect("AEC starts");
     wait_for(|| engine.snapshot().sink_accepted_frames == 12);
     let snapshot = engine.snapshot();
@@ -1972,7 +2098,12 @@ mod tests {
     let engine = aec_engine(&source, &sink, &echo);
 
     engine
-      .start(EngineConfig::aec("physical-id", "render-id"))
+      .start(EngineConfig::aec(
+        "physical-id",
+        "render-id",
+        "cable-input-id",
+        "cable-output-id",
+      ))
       .expect("AEC timeline starts");
     wait_for(|| engine.snapshot().state == EngineState::Failed);
     let snapshot = engine.snapshot();
@@ -2001,7 +2132,12 @@ mod tests {
     let engine = aec_engine(&source, &sink, &echo);
 
     engine
-      .start(EngineConfig::aec("physical-id", "render-id"))
+      .start(EngineConfig::aec(
+        "physical-id",
+        "render-id",
+        "cable-input-id",
+        "cable-output-id",
+      ))
       .expect("AEC timeline starts");
     let deadline = Instant::now() + Duration::from_secs(10);
     while engine.snapshot().sink_accepted_frames < 55 && Instant::now() < deadline {
@@ -2032,7 +2168,12 @@ mod tests {
     let engine = aec_engine(&source, &sink, &echo);
 
     engine
-      .start(EngineConfig::aec("physical-id", "render-id"))
+      .start(EngineConfig::aec(
+        "physical-id",
+        "render-id",
+        "cable-input-id",
+        "cable-output-id",
+      ))
       .expect("silent render endpoint still establishes an AEC run");
     wait_for(|| engine.snapshot().sink_accepted_frames == 2);
     let snapshot = engine.snapshot();
@@ -2057,7 +2198,12 @@ mod tests {
     let engine = aec_engine(&source, &sink, &echo);
 
     engine
-      .start(EngineConfig::aec("physical-id", "render-id"))
+      .start(EngineConfig::aec(
+        "physical-id",
+        "render-id",
+        "cable-input-id",
+        "cable-output-id",
+      ))
       .expect("active silent render endpoint establishes an AEC run");
     let deadline = Instant::now() + Duration::from_secs(2);
     while engine.snapshot().sink_accepted_frames < 50 && Instant::now() < deadline {
@@ -2096,7 +2242,12 @@ mod tests {
     let engine = aec_engine(&source, &sink, &echo);
 
     engine
-      .start(EngineConfig::aec("physical-id", "render-id"))
+      .start(EngineConfig::aec(
+        "physical-id",
+        "render-id",
+        "cable-input-id",
+        "cable-output-id",
+      ))
       .expect("AEC workers start before sustained skew is observed");
     wait_for(|| engine.snapshot().state == EngineState::Failed);
     let snapshot = engine.snapshot();
@@ -2134,14 +2285,24 @@ mod tests {
     let engine = aec_engine(&source, &sink, &echo);
 
     engine
-      .start(EngineConfig::aec("physical-id", "render-id"))
+      .start(EngineConfig::aec(
+        "physical-id",
+        "render-id",
+        "cable-input-id",
+        "cable-output-id",
+      ))
       .expect("first AEC run starts");
     wait_for(|| engine.snapshot().sink_accepted_frames == 1);
     let first = engine.snapshot();
     engine.stop().expect("first AEC run stops");
 
     engine
-      .start(EngineConfig::aec("physical-id", "render-id"))
+      .start(EngineConfig::aec(
+        "physical-id",
+        "render-id",
+        "cable-input-id",
+        "cable-output-id",
+      ))
       .expect("second AEC run starts");
     wait_for(|| engine.snapshot().sink_accepted_frames == 1);
     let second = engine.snapshot();
@@ -2166,7 +2327,12 @@ mod tests {
     let engine = aec_engine(&source, &sink, &echo);
 
     let error = engine
-      .start(EngineConfig::aec("physical-id", "physical-id"))
+      .start(EngineConfig::aec(
+        "physical-id",
+        "physical-id",
+        "cable-input-id",
+        "cable-output-id",
+      ))
       .expect_err("capture-role descriptor must not be accepted as render loopback");
     assert_eq!(error.kind, EngineErrorKind::InvalidSource);
     assert!(sink.records().is_empty());
@@ -2195,7 +2361,12 @@ mod tests {
     let echo = FakeEchoCancellerFactory::default();
     let engine = aec_engine(&source, &sink, &echo);
 
-    let _ = engine.start(EngineConfig::aec("physical-id", "render-id"));
+    let _ = engine.start(EngineConfig::aec(
+      "physical-id",
+      "render-id",
+      "cable-input-id",
+      "cable-output-id",
+    ));
     wait_for(|| engine.snapshot().state == EngineState::Failed);
     let snapshot = engine.snapshot();
     assert_eq!(

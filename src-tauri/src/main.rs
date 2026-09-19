@@ -6,7 +6,9 @@ use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
 
-use audio::{TrayConfiguration, TrayEngine, MICROPHONE_ENV, RENDER_ENV};
+use audio::{
+  TrayConfiguration, TrayEngine, CABLE_INPUT_ENV, CABLE_OUTPUT_ENV, MICROPHONE_ENV, RENDER_ENV,
+};
 use mini_aec_engine::{EngineSnapshot, EngineState, ProcessingMode};
 use tauri::menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem};
 use tauri::tray::TrayIconBuilder;
@@ -29,7 +31,7 @@ fn main() {
         app,
         "status",
         if configured {
-          "Status: stopped (development configuration loaded)"
+          "Status: stopped (VB-CABLE route configured)"
         } else {
           "Status: not configured"
         },
@@ -64,6 +66,21 @@ fn main() {
         false,
         None::<&str>,
       )?;
+      let cable_route = MenuItem::with_id(
+        app,
+        "cable-route",
+        configuration.as_ref().map_or_else(
+          || format!("Output: set {CABLE_INPUT_ENV} and {CABLE_OUTPUT_ENV}"),
+          |config| {
+            format!(
+              "Output route: {} -> {}",
+              config.cable_input_endpoint_id, config.cable_output_endpoint_id
+            )
+          },
+        ),
+        false,
+        None::<&str>,
+      )?;
       let restart = MenuItem::with_id(
         app,
         "restart-engine",
@@ -89,6 +106,7 @@ fn main() {
           &aec_enabled,
           &microphone,
           &render,
+          &cable_route,
           &restart,
           &start_with_windows,
           &open_logs,
@@ -168,15 +186,25 @@ fn status_text(snapshot: &EngineSnapshot) -> String {
     EngineState::Stopping => "stopping",
     EngineState::Failed => "failed",
   };
-  snapshot.last_error.as_ref().map_or_else(
+  if let Some(error) = &snapshot.last_error {
+    return format!("Status: {state} - {error}");
+  }
+  snapshot.sink_diagnostics_latest.as_ref().map_or_else(
     || format!("Status: {state}"),
-    |error| format!("Status: {state} - {error}"),
+    |output| {
+      format!(
+        "Status: {state} - output {} frames, padding {}",
+        output.accepted_frames, output.current_padding_frames
+      )
+    },
   )
 }
 
 #[cfg(test)]
 mod tests {
-  use mini_aec_engine::{DegradationReason, EngineSnapshot, EngineState, ProcessingMode};
+  use mini_aec_engine::{
+    DegradationReason, EngineError, EngineErrorKind, EngineSnapshot, EngineState, ProcessingMode,
+  };
 
   use super::status_text;
 
@@ -207,5 +235,24 @@ mod tests {
       }),
       "Status: running bypass"
     );
+  }
+
+  #[test]
+  fn tray_preserves_actionable_output_prerequisite_categories() {
+    for (kind, label) in [
+      (
+        EngineErrorKind::OutputPrerequisiteMissing,
+        "OutputPrerequisiteMissing",
+      ),
+      (EngineErrorKind::OutputAmbiguous, "OutputAmbiguous"),
+    ] {
+      let text = status_text(&EngineSnapshot {
+        state: EngineState::Failed,
+        last_error: Some(EngineError::new(kind, "select exact VB-CABLE endpoint IDs")),
+        ..EngineSnapshot::default()
+      });
+      assert!(text.contains(label));
+      assert!(text.contains("select exact VB-CABLE endpoint IDs"));
+    }
   }
 }

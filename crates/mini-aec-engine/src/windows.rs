@@ -8,8 +8,8 @@ use wasapi::{
 };
 
 use crate::{
-  source_is_public_endpoint, AudioInput, AudioInputFactory, InputRole, PacketMetadata,
-  SourceDescriptor, SourceError, SourceErrorKind, SourceFormat, CHANNELS, SAMPLE_RATE_HZ,
+  AudioInput, AudioInputFactory, InputRole, PacketMetadata, SourceDescriptor, SourceError,
+  SourceErrorKind, SourceFormat, CHANNELS, SAMPLE_RATE_HZ,
 };
 
 /// Stateless factory for exact-ID Windows capture streams.
@@ -52,12 +52,6 @@ impl AudioInputFactory for WindowsAudioInputFactory {
       return Err(SourceError::new(
         SourceErrorKind::Unavailable,
         format!("capture endpoint {:?} is not active", source.friendly_name),
-      ));
-    }
-    if role == InputRole::Microphone && source_is_public_endpoint(source) {
-      return Err(SourceError::new(
-        SourceErrorKind::InvalidSource,
-        "MiniAEC Microphone cannot be opened as its own physical source",
       ));
     }
     WindowsAudioInput::open(role, &source.endpoint_id)
@@ -146,13 +140,6 @@ impl WindowsAudioInput {
         ),
       ));
     }
-    if role == InputRole::Microphone && source_is_public_endpoint(&current) {
-      return Err(SourceError::new(
-        SourceErrorKind::InvalidSource,
-        "MiniAEC Microphone cannot be opened as its own physical source",
-      ));
-    }
-
     let mut audio_client = device
       .get_iaudioclient()
       .map_err(|error| map_wasapi("create the WASAPI audio client", error))?;
@@ -252,11 +239,11 @@ impl AudioInput for WindowsAudioInput {
     if info.flags.silent {
       samples[..read_frames].fill(0.0);
     } else {
-      for (destination, bytes) in samples[..read_frames]
-        .iter_mut()
-        .zip(self.packet_bytes[..read_frames * size_of::<f32>()].chunks_exact(size_of::<f32>()))
-      {
-        *destination = f32::from_le_bytes(bytes.try_into().expect("f32 chunk has four bytes"));
+      let (packet_samples, remainder) =
+        self.packet_bytes[..required_bytes].as_chunks::<{ size_of::<f32>() }>();
+      debug_assert!(remainder.is_empty());
+      for (destination, bytes) in samples[..read_frames].iter_mut().zip(packet_samples) {
+        *destination = f32::from_le_bytes(*bytes);
       }
     }
     Ok(Some(PacketMetadata {

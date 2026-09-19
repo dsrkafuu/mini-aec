@@ -1893,8 +1893,8 @@ name = "mini-aec"
 version = "0.1.0"
 dependencies = [
  "mini-aec-engine",
- "mini-aec-transport",
- "mini-aec-windows-transport",
+ "mini-aec-output",
+ "mini-aec-windows-output",
  "tauri",
  "tauri-build",
 ]
@@ -1903,7 +1903,7 @@ dependencies = [
 name = "mini-aec-engine"
 version = "0.1.0"
 dependencies = [
- "mini-aec-transport",
+ "mini-aec-output",
  "serde",
  "wasapi",
  "webrtc-audio-processing",
@@ -1917,13 +1917,17 @@ dependencies = [
  "clap",
  "hound",
  "mini-aec-engine",
- "mini-aec-transport",
- "mini-aec-windows-transport",
+ "mini-aec-output",
+ "mini-aec-windows-output",
  "serde",
  "serde_json",
  "wasapi",
  "webrtc-audio-processing",
 ]
+
+[[package]]
+name = "mini-aec-output"
+version = "0.1.0"
 
 [[package]]
 name = "mini-aec-release"
@@ -1952,6 +1956,14 @@ dependencies = [
 [[package]]
 name = "mini-aec-transport"
 version = "0.1.0"
+
+[[package]]
+name = "mini-aec-windows-output"
+version = "0.1.0"
+dependencies = [
+ "mini-aec-output",
+ "wasapi",
+]
 
 [[package]]
 name = "mini-aec-windows-transport"

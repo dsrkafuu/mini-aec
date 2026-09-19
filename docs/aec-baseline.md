@@ -33,7 +33,7 @@ These facts justify retaining the capture, alignment, reporting, and default AEC
 
 ## Current product-path status
 
-The M1 `MiniAEC Microphone` transport and M2 real-time physical-microphone bypass are validated on the approved elevated development path. The driver accepts continuous fixed-format user-mode PCM, ordinary Windows capture clients can consume the public endpoint, and `mini-aec-engine` can carry one explicitly selected physical microphone through bounded normalization, framing, queueing and sink-session lifecycle without stale-frame replay.
+The historical M1 `MiniAEC Microphone` transport and M2 real-time physical-microphone bypass were validated on an approved development-driver path. They remain evidence for the engine's bounded normalization, framing, queueing and stale-frame prevention, but the SysVAD endpoint is no longer an active product dependency.
 
 The active M3 change implements two explicitly role-checked WASAPI inputs, capture-paced QPC pairing, the frozen default real-time adapter, `RunningAec`/`Degraded`/`Failed` behavior, metadata-only JSONL evidence, a headless `realtime-aec` command, and tray AEC/bypass control. Synthetic engine, adapter, CLI, and tray tests validate the repository behavior without installing a driver. A separately approved elevated run exercised the installed transport through Windows Recorder and Discord. Far-end removal remained effective at the tested louder playback level, near-end-only speech was natural, and render silence/recovery had no audible stale replay or discontinuity. Double-talk remained understandable but had obvious near-end swallowing, so the desired double-talk quality target did not pass; M3 records that frozen-default limitation while accepting the separately verified functional path. Final read-only inventory after the user-performed restart verified complete rollback of the validation device, endpoint, package, certificates, service, default roles and TESTSIGNING state.
 
@@ -46,7 +46,7 @@ The old product context evaluated WAV files directly and led to experiments in n
 ```text
 physical microphone + physical render loopback
   -> MiniAEC default AEC
-  -> MiniAEC Microphone
+  -> CABLE Input -> CABLE Output
   -> optional downstream noise suppression
 ```
 
@@ -99,11 +99,11 @@ cargo run -p mini-aec-lab -- aec `
 
 Offline WAV output is now a diagnostic, not the final acceptance surface. The default baseline must be judged again only after the following are working:
 
-1. Completed in M1: a bundled `MiniAEC Microphone` endpoint receives continuous user-mode PCM.
-2. Completed in M2: the physical microphone passes through that endpoint without AEC on the elevated development path.
-3. Implemented and automated in M3: the real-time engine supplies an explicitly selected physical render loopback to the frozen default AEC3 adapter and aligns it with microphone frames on a bounded QPC timeline.
-4. Completed in M3 validation: Windows Recorder and Discord consumed the AEC output through `MiniAEC Microphone`; the scored client intervals had no reported unexplained discontinuity or stale replay.
-5. Completed in M3 quality characterization: far-end-only, near-end-only and render silence/recovery met their listening targets; double-talk remained understandable but had obvious near-end swallowing and is recorded as a deferred default-algorithm quality limitation.
+1. The user has separately installed a supported VB-CABLE pair from the official source.
+2. MiniAEC resolves exact `CABLE Input` and `CABLE Output` endpoint IDs without default-device fallback or feedback-producing source selection.
+3. The real-time engine supplies an explicitly selected physical render loopback to the frozen default AEC3 adapter and aligns it with microphone frames on a bounded QPC timeline.
+4. Windows Recorder and at least one meeting application consume the AEC output from `CABLE Output` while MiniAEC renders to `CABLE Input`.
+5. Far-end-only, near-end-only, double-talk, render silence/recovery, stop/restart and long-run output behavior are recorded without reinterpreting the historical algorithm result.
 
 The minimum acoustic matrix is:
 
@@ -122,4 +122,4 @@ Only after this end-to-end default baseline exposes a repeatable blocker may a n
 
 Keep the frozen M131 default configuration for the completed M3 path. Double-talk near-end swallowing is a known quality limitation rather than unfinished M3 implementation; any future algorithm experiment requires a separate approved change, identical-input old/new evidence, and preservation of the demonstrated far-end removal.
 
-M3 metadata collects timestamp delta, buffer depth, discontinuity, underrun and bounded processing evidence, but it does not claim asynchronous resampling or sustained clock-error correction. That belongs to M4 after measurements establish its direction and required control range. The normal-user access change modifies the driver/runtime permission boundary and validation harness without changing AEC3 defaults, dependency pins or PCM; its approved installed-package run passed non-elevated client and rollback acceptance. Production installation and signing remain separate M5 concerns.
+The metadata baseline collects timestamp delta, buffer depth, discontinuity, underrun and bounded processing evidence but does not claim asynchronous drift correction. Historical normal-user driver access and rollback evidence does not remove the need to validate the new VB-CABLE render clock and client path. Production driver installation and signing are no longer MiniAEC concerns.

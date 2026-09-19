@@ -8,23 +8,30 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use anyhow::{bail, Context, Result};
 use mini_aec_engine::windows::WindowsAudioInputFactory;
 use mini_aec_engine::{
-  DefaultEchoCancellerFactory, Engine, EngineConfig, EngineState, ValidationEvent,
-  ValidationEventKind, VirtualSinkFactory,
+  AudioOutputFactory, DefaultEchoCancellerFactory, Engine, EngineConfig, EngineState,
+  ValidationEvent, ValidationEventKind,
 };
-use mini_aec_transport::{SinkError, VirtualMicrophoneSink};
-use mini_aec_windows_transport::WindowsVirtualMicrophoneSink;
+use mini_aec_output::{AudioOutput, OutputError, OutputPair};
+use mini_aec_windows_output::{resolve_vb_cable_pair, WindowsVbCableOutput};
 
 use crate::platform::{BypassConfig, RealtimeAecConfig};
 
-const VALIDATION_SCHEMA_VERSION: u16 = 2;
+const VALIDATION_SCHEMA_VERSION: u16 = 3;
 const SNAPSHOT_INTERVAL: Duration = Duration::from_secs(1);
 
-struct WindowsSinkFactory;
+struct WindowsOutputFactory;
 
-impl VirtualSinkFactory for WindowsSinkFactory {
-  fn connect(&self) -> Result<Box<dyn VirtualMicrophoneSink>, SinkError> {
-    WindowsVirtualMicrophoneSink::connect()
-      .map(|sink| Box::new(sink) as Box<dyn VirtualMicrophoneSink>)
+impl AudioOutputFactory for WindowsOutputFactory {
+  fn resolve_pair(
+    &self,
+    cable_input_endpoint_id: &str,
+    cable_output_endpoint_id: &str,
+  ) -> Result<OutputPair, OutputError> {
+    resolve_vb_cable_pair(cable_input_endpoint_id, cable_output_endpoint_id)
+  }
+
+  fn connect(&self, pair: &OutputPair) -> Result<Box<dyn AudioOutput>, OutputError> {
+    Ok(Box::new(WindowsVbCableOutput::new(pair.clone())))
   }
 }
 
@@ -32,8 +39,11 @@ pub fn bypass(config: BypassConfig) -> Result<()> {
   if config.duration.is_zero() {
     bail!("bypass duration must be greater than zero");
   }
-  if config.microphone_endpoint_id.trim().is_empty() {
-    bail!("an exact physical microphone endpoint ID is required");
+  if config.microphone_endpoint_id.trim().is_empty()
+    || config.cable_input_endpoint_id.trim().is_empty()
+    || config.cable_output_endpoint_id.trim().is_empty()
+  {
+    bail!("exact physical microphone, CABLE Input and CABLE Output endpoint IDs are required");
   }
 
   let output_root = validated_evidence_root(&config.output_root)?;
@@ -48,11 +58,15 @@ pub fn bypass(config: BypassConfig) -> Result<()> {
 
   let engine = Engine::new(
     Arc::new(WindowsAudioInputFactory),
-    Arc::new(WindowsSinkFactory),
+    Arc::new(WindowsOutputFactory),
   );
   run_engine(
     &engine,
-    EngineConfig::bypass(config.microphone_endpoint_id),
+    EngineConfig::bypass(
+      config.microphone_endpoint_id,
+      config.cable_input_endpoint_id,
+      config.cable_output_endpoint_id,
+    ),
     config.duration,
     &run_dir,
     &mut events,
@@ -65,9 +79,14 @@ pub fn realtime_aec(config: RealtimeAecConfig) -> Result<()> {
   if config.duration.is_zero() {
     bail!("real-time AEC duration must be greater than zero");
   }
-  if config.microphone_endpoint_id.trim().is_empty() || config.render_endpoint_id.trim().is_empty()
+  if config.microphone_endpoint_id.trim().is_empty()
+    || config.render_endpoint_id.trim().is_empty()
+    || config.cable_input_endpoint_id.trim().is_empty()
+    || config.cable_output_endpoint_id.trim().is_empty()
   {
-    bail!("exact physical microphone and render endpoint IDs are required");
+    bail!(
+      "exact physical microphone, render, CABLE Input and CABLE Output endpoint IDs are required"
+    );
   }
   let output_root = validated_evidence_root(&config.output_root)?;
   let run_dir = output_root.join(unix_time_ms()?.to_string());
@@ -80,12 +99,17 @@ pub fn realtime_aec(config: RealtimeAecConfig) -> Result<()> {
   );
   let engine = Engine::new_with_aec(
     Arc::new(WindowsAudioInputFactory),
-    Arc::new(WindowsSinkFactory),
+    Arc::new(WindowsOutputFactory),
     Arc::new(DefaultEchoCancellerFactory),
   );
   run_engine(
     &engine,
-    EngineConfig::aec(config.microphone_endpoint_id, config.render_endpoint_id),
+    EngineConfig::aec(
+      config.microphone_endpoint_id,
+      config.render_endpoint_id,
+      config.cable_input_endpoint_id,
+      config.cable_output_endpoint_id,
+    ),
     config.duration,
     &run_dir,
     &mut events,
@@ -101,6 +125,7 @@ fn run_engine(
   events: &mut BufWriter<File>,
   label: &str,
 ) -> Result<()> {
+  println!("{label}: MiniAEC -> CABLE Input -> CABLE Output");
   println!("{label} evidence: {}", run_dir.display());
   let run_started = Instant::now();
   engine
@@ -214,12 +239,10 @@ fn validated_evidence_root(requested: &Path) -> Result<PathBuf> {
     repository.join(requested)
   };
   let artifacts = repository.join("artifacts");
-  let driver_validation = repository.join("driver").join("windows").join("out");
-  if !absolute.starts_with(&artifacts) && !absolute.starts_with(&driver_validation) {
+  if !absolute.starts_with(&artifacts) {
     bail!(
-      "bypass evidence must remain below {} or {}",
-      artifacts.display(),
-      driver_validation.display()
+      "VB-CABLE evidence must remain below {}",
+      artifacts.display()
     );
   }
   Ok(absolute)
@@ -244,15 +267,15 @@ mod tests {
   use super::{validated_evidence_root, validation_event};
 
   #[test]
-  fn evidence_path_stays_in_ignored_private_or_validation_roots() {
+  fn evidence_path_stays_in_the_ignored_private_root() {
     assert!(validated_evidence_root(Path::new("artifacts/bypass")).is_ok());
-    assert!(validated_evidence_root(Path::new("driver/windows/out/validation/engine")).is_ok());
+    assert!(validated_evidence_root(Path::new("driver/windows/out/validation/engine")).is_err());
     assert!(validated_evidence_root(Path::new("testdata/private-audio")).is_err());
     assert!(validated_evidence_root(Path::new("artifacts/../testdata")).is_err());
   }
 
   #[test]
-  fn schema_v2_event_records_monotonic_and_requested_duration() {
+  fn schema_v3_event_records_monotonic_and_requested_duration() {
     let event = validation_event(
       ValidationEventKind::Started,
       EngineSnapshot::default(),
@@ -260,10 +283,10 @@ mod tests {
       Duration::ZERO,
       Duration::from_mins(30),
     );
-    let serialized = serde_json::to_string(&event).expect("schema v2 event serializes");
+    let serialized = serde_json::to_string(&event).expect("schema v3 event serializes");
     let parsed: ValidationEvent =
-      serde_json::from_str(&serialized).expect("schema v2 event parses");
-    assert_eq!(parsed.schema_version, 2);
+      serde_json::from_str(&serialized).expect("schema v3 event parses");
+    assert_eq!(parsed.schema_version, 3);
     assert_eq!(parsed.monotonic_elapsed_ms, 0);
     assert_eq!(parsed.requested_duration_ms, 1_800_000);
   }

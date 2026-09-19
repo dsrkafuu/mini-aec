@@ -32,6 +32,6 @@
 
 ## 5. Lifecycle handoff and release readiness
 
-- [ ] 5.1 Verify that a passing package-preflight report and manifest are consumable by `production-driver-lifecycle` before its authorization or staging state, while package verification alone never reports endpoint activation or installation success.
+- [x] 5.1 Verify that a passing package-preflight report and manifest are consumable by `production-driver-lifecycle` before its authorization or staging state, while package verification alone never reports endpoint activation or installation success.
 - [ ] 5.2 Review the final package tree and evidence for complete INF/SYS/CAT trust coverage, fixed SysVAD provenance, public-only signing metadata, absence of development identities, absence of private material, and absence of private audio or meeting content.
 - [x] 5.3 Publish the package reproducibility and signing verification instructions, known external prerequisites, and explicit stop point before any separately authorized Windows installation, activation, rollback, uninstall, or user-performed restart boundary.

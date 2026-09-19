@@ -11,12 +11,13 @@ use std::path::{Component, Path, PathBuf};
 
 use anyhow::{bail, Context, Result};
 use mini_aec_engine::{
-  EngineErrorKind, EngineState, SourceDescriptor, ValidationEvent, ValidationEventKind,
+  EngineErrorKind, EngineState, OutputFormatSnapshot, OutputPairSnapshot, SourceDescriptor,
+  ValidationEvent, ValidationEventKind,
 };
 use serde::{Deserialize, Serialize};
 
-const REPORT_SCHEMA_VERSION: u16 = 2;
-const CURRENT_EVENT_SCHEMA_VERSION: u16 = 2;
+const REPORT_SCHEMA_VERSION: u16 = 3;
+const CURRENT_EVENT_SCHEMA_VERSION: u16 = 3;
 const SNAPSHOT_INTERVAL_MS: u128 = 1_000;
 const MAX_EVENT_GAP_MS: u128 = 2_000;
 const WINDOW_MS: u128 = 300_000;
@@ -86,6 +87,8 @@ pub struct StabilityReport {
   pub aec_instance_id: Option<u128>,
   pub microphone: SourceDescriptor,
   pub render: SourceDescriptor,
+  pub output_pair: Option<OutputPairSnapshot>,
+  pub output_health: OutputHealthReport,
   pub requested_duration_ms: u128,
   pub observed_duration_ms: u128,
   pub terminal_event: ValidationEventKind,
@@ -98,6 +101,21 @@ pub struct StabilityReport {
   pub operator_observations: Option<OperatorObservations>,
   pub thirty_minute_accepted: bool,
   pub follow_up: FollowUpGuidance,
+}
+
+#[derive(Clone, Debug, Default, Serialize)]
+pub struct OutputHealthReport {
+  pub negotiated_format: Option<OutputFormatSnapshot>,
+  pub rendered_frames: u64,
+  pub converted_frames: u64,
+  pub final_padding_frames: u32,
+  pub output_clock_frequency: Option<u64>,
+  pub output_clock_position: Option<u64>,
+  pub output_clock_qpc_position: Option<u64>,
+  pub underruns: u64,
+  pub rejected_writes: u64,
+  pub endpoint_invalidations: u64,
+  pub output_failures: u64,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -187,6 +205,7 @@ struct PreparedEvidence {
   run_id: u128,
   microphone: SourceDescriptor,
   render: SourceDescriptor,
+  output_pair: Option<OutputPairSnapshot>,
   requested_duration_ms: u128,
   observed_duration_ms: u128,
   terminal_event: ValidationEventKind,
@@ -251,7 +270,7 @@ fn parse_evidence(input: impl BufRead) -> Result<PreparedEvidence> {
     }
     let event = serde_json::from_str::<ValidationEvent>(&line)
       .with_context(|| format!("invalid validation event on line {}", index + 1))?;
-    if !matches!(event.schema_version, 1 | CURRENT_EVENT_SCHEMA_VERSION) {
+    if !matches!(event.schema_version, 1 | 2 | CURRENT_EVENT_SCHEMA_VERSION) {
       bail!(
         "unsupported validation event schema {} on line {}",
         event.schema_version,
@@ -317,6 +336,10 @@ fn parse_evidence(input: impl BufRead) -> Result<PreparedEvidence> {
     .render_source
     .clone()
     .context("started event does not contain a render descriptor")?;
+  let output_pair = first.output_pair.clone();
+  if authoritative && output_pair.is_none() {
+    bail!("schema version 3 evidence requires one exact VB-CABLE output pair");
+  }
   let session_id = first.session_id;
   for event in &events {
     if event.snapshot.run_id != Some(run_id) {
@@ -326,6 +349,9 @@ fn parse_evidence(input: impl BufRead) -> Result<PreparedEvidence> {
       || event.snapshot.render_source.as_ref() != Some(&render)
     {
       bail!("validation evidence changes endpoint identity within one run");
+    }
+    if event.snapshot.output_pair != output_pair {
+      bail!("validation evidence changes the VB-CABLE output pair within one run");
     }
     if event.snapshot.session_id != session_id {
       bail!("validation evidence changes sink-session identity within one run");
@@ -353,6 +379,7 @@ fn parse_evidence(input: impl BufRead) -> Result<PreparedEvidence> {
     run_id,
     microphone,
     render,
+    output_pair,
     requested_duration_ms,
     observed_duration_ms,
     terminal_event,
@@ -380,6 +407,7 @@ fn analyze(
     .events
     .last()
     .expect("prepared evidence is nonempty");
+  let output_health = summarize_output_health(evidence);
   let thirty_minute_accepted = evidence.requested_duration_ms >= MIN_GATE_DURATION_MS
     && drift_disposition == DriftDisposition::BoundedSynchronizerSufficient
     && functional_disposition == FunctionalDisposition::Passed;
@@ -406,6 +434,8 @@ fn analyze(
     aec_instance_id: last.snapshot.aec_instance_id,
     microphone: evidence.microphone.clone(),
     render: evidence.render.clone(),
+    output_pair: evidence.output_pair.clone(),
+    output_health,
     requested_duration_ms: evidence.requested_duration_ms,
     observed_duration_ms: evidence.observed_duration_ms,
     terminal_event: evidence.terminal_event,
@@ -419,6 +449,29 @@ fn analyze(
     thirty_minute_accepted,
     follow_up,
   }
+}
+
+fn summarize_output_health(evidence: &PreparedEvidence) -> OutputHealthReport {
+  let latest = evidence
+    .events
+    .iter()
+    .rev()
+    .find_map(|event| event.snapshot.sink_diagnostics_latest.as_ref());
+  latest.map_or_else(OutputHealthReport::default, |diagnostics| {
+    OutputHealthReport {
+      negotiated_format: diagnostics.negotiated_format,
+      rendered_frames: diagnostics.rendered_frames,
+      converted_frames: diagnostics.converted_frames,
+      final_padding_frames: diagnostics.current_padding_frames,
+      output_clock_frequency: diagnostics.output_clock_frequency,
+      output_clock_position: diagnostics.output_clock_position,
+      output_clock_qpc_position: diagnostics.output_clock_qpc_position,
+      underruns: diagnostics.underruns,
+      rejected_writes: diagnostics.rejected_writes,
+      endpoint_invalidations: diagnostics.endpoint_invalidations,
+      output_failures: diagnostics.output_failures,
+    }
+  })
 }
 
 fn clean_segments(events: &[ValidationEvent]) -> (Vec<Vec<Observation>>, Vec<ExcludedInterval>) {
@@ -1115,7 +1168,7 @@ fn classify_functional(
     .saturating_sub(started_snapshot.sink_failures)
     > 0
   {
-    failures.push("the virtual microphone sink reported a failure".to_owned());
+    failures.push("the VB-CABLE output reported a failure".to_owned());
   }
   if snapshot
     .aec_processed_frames
@@ -1135,7 +1188,7 @@ fn classify_functional(
     failures
       .push("periodic evidence shows a queue growing across consecutive observations".to_owned());
   }
-  let driver_start = evidence
+  let output_start = evidence
     .events
     .iter()
     .find_map(|event| event.snapshot.sink_diagnostics_start.as_ref())
@@ -1145,27 +1198,40 @@ fn classify_functional(
         .iter()
         .find_map(|event| event.snapshot.sink_diagnostics_latest.as_ref())
     });
-  let driver_latest = evidence
+  let output_latest = evidence
     .events
     .iter()
     .rev()
     .find_map(|event| event.snapshot.sink_diagnostics_latest.as_ref());
-  if let Some((start, latest)) = driver_start.zip(driver_latest) {
+  if let Some((start, latest)) = output_start.zip(output_latest) {
     let rejected = latest.rejected_writes.saturating_sub(start.rejected_writes);
     let overflows = latest.overflows.saturating_sub(start.overflows);
     let discarded = latest
       .discarded_frames
       .saturating_sub(start.discarded_frames);
     let underruns = latest.underruns.saturating_sub(start.underruns);
+    let endpoint_invalidations = latest
+      .endpoint_invalidations
+      .saturating_sub(start.endpoint_invalidations);
+    let output_failures = latest.output_failures.saturating_sub(start.output_failures);
     if rejected > 0 {
-      failures.push("the driver rejected one or more writes".to_owned());
+      failures.push("the VB-CABLE output rejected one or more writes".to_owned());
     }
     if overflows > 0 || discarded > 0 {
-      failures.push("the driver overflowed or discarded frames".to_owned());
+      failures.push("the VB-CABLE output overflowed or discarded frames".to_owned());
     }
-    push_counter_failure(&mut failures, "driver_underruns", underruns, &explained);
+    if endpoint_invalidations > 0 {
+      failures.push("the VB-CABLE endpoint was invalidated".to_owned());
+    }
+    if output_failures > 0 {
+      failures.push("the VB-CABLE output recorded one or more render failures".to_owned());
+    }
+    push_counter_failure(&mut failures, "output_underruns", underruns, &explained);
+    if evidence.authoritative && latest.negotiated_format.is_none() {
+      inconclusive.push("the negotiated VB-CABLE output format is unavailable".to_owned());
+    }
   } else {
-    inconclusive.push("start/latest driver diagnostics are unavailable".to_owned());
+    inconclusive.push("start/latest output diagnostics are unavailable".to_owned());
   }
   if let Some(operator) = operator {
     if !operator.client_continuously_consumed {
@@ -1254,8 +1320,8 @@ fn validated_existing_evidence_path(requested: &Path) -> Result<PathBuf> {
   let absolute = repository_absolute(requested)?;
   let canonical = fs::canonicalize(&absolute)
     .with_context(|| format!("failed to resolve existing evidence {}", absolute.display()))?;
-  if !is_within_evidence_roots(&canonical)? {
-    bail!("evidence must remain below artifacts/ or driver/windows/out/");
+  if !is_within_read_evidence_roots(&canonical)? {
+    bail!("evidence must remain below artifacts/ or the historical driver/windows/out/ root");
   }
   Ok(canonical)
 }
@@ -1268,13 +1334,20 @@ fn validated_output_path(requested: &Path) -> Result<PathBuf> {
     bail!("report path must not contain parent-directory traversal");
   }
   let absolute = repository_absolute(requested)?;
+  let repository = Path::new(env!("CARGO_MANIFEST_DIR"))
+    .parent()
+    .and_then(Path::parent)
+    .context("failed to resolve the MiniAEC repository root")?;
+  if !absolute.starts_with(repository.join("artifacts")) {
+    bail!("report must remain below artifacts/");
+  }
   let parent = absolute.parent().context("report path has no parent")?;
   fs::create_dir_all(parent)
     .with_context(|| format!("failed to create report directory {}", parent.display()))?;
   let canonical_parent = fs::canonicalize(parent)
     .with_context(|| format!("failed to resolve report directory {}", parent.display()))?;
-  if !is_within_evidence_roots(&canonical_parent)? {
-    bail!("report must remain below artifacts/ or driver/windows/out/");
+  if !canonical_parent.starts_with(fs::canonicalize(repository.join("artifacts"))?) {
+    bail!("report must remain below artifacts/");
   }
   Ok(absolute)
 }
@@ -1291,7 +1364,7 @@ fn repository_absolute(path: &Path) -> Result<PathBuf> {
   })
 }
 
-fn is_within_evidence_roots(path: &Path) -> Result<bool> {
+fn is_within_read_evidence_roots(path: &Path) -> Result<bool> {
   let repository = Path::new(env!("CARGO_MANIFEST_DIR"))
     .parent()
     .and_then(Path::parent)
@@ -1312,8 +1385,9 @@ mod tests {
   use std::io::Cursor;
 
   use mini_aec_engine::{
-    EngineError, EngineSnapshot, InputRole, ProcessingMode, SinkTransportSnapshot,
-    SinkTransportState, SourceDescriptor, SourceFormat, ValidationEvent,
+    EngineError, EngineSnapshot, InputRole, OutputFormatSnapshot, OutputPairSnapshot,
+    OutputSampleTypeSnapshot, ProcessingMode, SinkTransportSnapshot, SinkTransportState,
+    SourceDescriptor, SourceFormat, ValidationEvent,
   };
 
   use super::*;
@@ -1359,6 +1433,13 @@ mod tests {
       mode: Some(ProcessingMode::Aec),
       source: Some(microphone.clone()),
       render_source: Some(render.clone()),
+      output_pair: Some(OutputPairSnapshot {
+        cable_input_endpoint_id: "synthetic-cable-input".to_owned(),
+        cable_input_friendly_name: "Synthetic CABLE Input".to_owned(),
+        cable_output_endpoint_id: "synthetic-cable-output".to_owned(),
+        cable_output_friendly_name: "Synthetic CABLE Output".to_owned(),
+        device_family: "VB-Audio Virtual Cable".to_owned(),
+      }),
       run_id: Some(7),
       session_id: Some(11),
       aec_instance_id: Some(13),
@@ -1366,7 +1447,7 @@ mod tests {
       ..EngineSnapshot::default()
     };
     events.push(ValidationEvent {
-      schema_version: 2,
+      schema_version: 3,
       unix_ms: 1_000,
       monotonic_elapsed_ms: 0,
       requested_duration_ms,
@@ -1392,7 +1473,7 @@ mod tests {
         snapshot.state = EngineState::Stopped;
       }
       events.push(ValidationEvent {
-        schema_version: 2,
+        schema_version: 3,
         unix_ms: 1_000 + u128::from(second) * 1_000,
         monotonic_elapsed_ms: u128::from(second) * 1_000,
         requested_duration_ms,
@@ -1405,11 +1486,12 @@ mod tests {
       });
     }
     PreparedEvidence {
-      event_schema_version: 2,
+      event_schema_version: 3,
       authoritative: true,
       run_id: 7,
       microphone,
       render,
+      output_pair: base.output_pair.clone(),
       requested_duration_ms,
       observed_duration_ms: requested_duration_ms,
       terminal_event: ValidationEventKind::Final,
@@ -1429,7 +1511,7 @@ mod tests {
 
   fn transport_snapshot(accepted_frames: u64) -> SinkTransportSnapshot {
     SinkTransportSnapshot {
-      schema_version: 2,
+      schema_version: 3,
       state: SinkTransportState::Closed,
       active_session_id: None,
       last_accepted_sequence: accepted_frames.checked_sub(1),
@@ -1443,6 +1525,20 @@ mod tests {
       underruns: 0,
       overflows: 0,
       discarded_frames: 0,
+      current_padding_frames: 0,
+      rendered_frames: accepted_frames.saturating_mul(480),
+      output_clock_frequency: None,
+      output_clock_position: None,
+      output_clock_qpc_position: None,
+      negotiated_format: Some(OutputFormatSnapshot {
+        sample_rate_hz: 48_000,
+        channels: 2,
+        bits_per_sample: 32,
+        sample_type: OutputSampleTypeSnapshot::Float,
+      }),
+      converted_frames: 0,
+      endpoint_invalidations: 0,
+      output_failures: 0,
       driver_restarts: 0,
     }
   }
@@ -1632,6 +1728,52 @@ mod tests {
   }
 
   #[test]
+  fn output_failure_counters_fail_the_functional_gate() {
+    for mutate in [
+      |snapshot: &mut SinkTransportSnapshot| snapshot.rejected_writes = 1,
+      |snapshot: &mut SinkTransportSnapshot| snapshot.endpoint_invalidations = 1,
+      |snapshot: &mut SinkTransportSnapshot| snapshot.output_failures = 1,
+    ] {
+      let mut evidence = synthetic_evidence(&[0.0; 6]);
+      add_sink_diagnostics(&mut evidence);
+      let latest = evidence
+        .events
+        .last_mut()
+        .and_then(|event| event.snapshot.sink_diagnostics_latest.as_mut())
+        .expect("synthetic output diagnostics");
+      mutate(latest);
+      let result = report(&evidence, Some(confirmed_operator()));
+      assert_eq!(result.functional_disposition, FunctionalDisposition::Failed);
+    }
+  }
+
+  #[test]
+  fn output_underrun_requires_an_operator_explanation() {
+    let mut evidence = synthetic_evidence(&[0.0; 6]);
+    add_sink_diagnostics(&mut evidence);
+    evidence
+      .events
+      .last_mut()
+      .and_then(|event| event.snapshot.sink_diagnostics_latest.as_mut())
+      .expect("synthetic output diagnostics")
+      .underruns = 1;
+    assert_eq!(
+      report(&evidence, Some(confirmed_operator())).functional_disposition,
+      FunctionalDisposition::Failed
+    );
+
+    let operator = OperatorObservations {
+      explained_counters: vec!["output_underruns".to_owned()],
+      notes: Some("bounded startup convergence confirmed in the recording".to_owned()),
+      ..confirmed_operator()
+    };
+    assert_eq!(
+      report(&evidence, Some(operator)).functional_disposition,
+      FunctionalDisposition::Passed
+    );
+  }
+
+  #[test]
   fn missing_operator_observations_leave_functional_gate_inconclusive() {
     let result = report(&synthetic_evidence(&[0.0; 6]), None);
     assert_eq!(
@@ -1699,6 +1841,28 @@ mod tests {
   }
 
   #[test]
+  fn parser_reads_historical_v2_without_inventing_a_vb_cable_pair() {
+    let mut evidence = synthetic_evidence(&[0.0; 6]);
+    for event in &mut evidence.events {
+      event.schema_version = 2;
+      event.snapshot.output_pair = None;
+    }
+    let parsed = parse_evidence(Cursor::new(serialized_evidence(&evidence)))
+      .expect("historical schema v2 evidence remains readable");
+    assert!(!parsed.authoritative);
+    assert!(parsed.output_pair.is_none());
+  }
+
+  #[test]
+  fn parser_requires_a_pair_for_current_v3_evidence() {
+    let mut evidence = synthetic_evidence(&[0.0; 6]);
+    for event in &mut evidence.events {
+      event.snapshot.output_pair = None;
+    }
+    assert!(parse_evidence(Cursor::new(serialized_evidence(&evidence))).is_err());
+  }
+
+  #[test]
   fn parser_accepts_aec_rebuild_and_segments_instance_change() {
     let mut evidence = synthetic_evidence(&[0.0; 6]);
     for event in &mut evidence.events[600..] {
@@ -1739,6 +1903,11 @@ mod tests {
     );
     assert_eq!(report_json["functional_disposition"], "passed");
     assert_eq!(report_json["thirty_minute_accepted"], true);
+    assert_eq!(report_json["output_health"]["rendered_frames"], 86_400_000);
+    assert_eq!(
+      report_json["output_pair"]["cable_output_endpoint_id"],
+      "synthetic-cable-output"
+    );
     assert_eq!(
       report_json["follow_up"],
       "monitor-early-version-diagnostics"

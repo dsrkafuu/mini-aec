@@ -1,5 +1,7 @@
 # Real-time default AEC validation
 
+> Historical record and current-method baseline: the measurements below were produced through the retired SysVAD `MiniAEC Microphone` development path and are preserved without reinterpretation. All future product acceptance renders MiniAEC output to VB-CABLE `CABLE Input` and has Recorder plus a target meeting application consume the paired `CABLE Output`. MiniAEC does not install or manage VB-CABLE.
+
 Status: implementation, automated verification and separately approved elevated functional acceptance are complete under OpenSpec change `implement-realtime-default-aec`. The run completed acoustic quality characterization plus Windows Recorder and Discord consumption. Far-end removal, near-end-only preservation and render silence/recovery met their targets; double-talk remained understandable but had obvious near-end swallowing and is recorded as a frozen default-algorithm quality limitation rather than described as meeting the desired target. Final read-only inventory after the user-performed restart verified complete rollback of the validation device, endpoint, package, certificates, service, default roles and TESTSIGNING state.
 
 ## Scope
@@ -32,9 +34,9 @@ Endpoint enumeration is read-only and can be run without installing a driver:
 
 Record the exact ID and reported shared-mode format for one physical capture endpoint and one physical render endpoint. Friendly-name matching, default-device fallback, and device auto-follow are intentionally unavailable in the real-time AEC command.
 
-Before any machine-changing acceptance command, follow `driver/windows/README.md`: record the current machine inventory and rollback targets, run the lifecycle `Plan` action, identify the exact ignored validation package, then obtain explicit user approval for the build/install/restart/record/uninstall sequence. Ordinary `devices`, `realtime-aec`, `bypass`, tray, test, and lint commands never install, update, remove, enable, disable, or select a driver and never change Windows default audio roles.
+For the active product path, install VB-CABLE manually from its official source before validation and perform any requested restart yourself. MiniAEC commands only enumerate explicit endpoints and run audio; they never download, install, update or remove the external driver and never change Windows default audio roles.
 
-## Headless command
+## Historical headless command
 
 After a separately approved development driver installation, run through the normal-user wrapper from an ordinary non-elevated interactive PowerShell:
 
@@ -51,13 +53,13 @@ The wrapper creates `artifacts/normal-user-access/<run>/engine-aec/<unix-ms>/eng
 
 ## Acoustic scenarios
 
-Use the same physical microphone, render endpoint, room geometry, loudspeaker level, and application routing for the complete run. Consume `MiniAEC Microphone` through Windows Recorder and at least one target meeting application. Keep all recordings under ignored local paths.
+For future VB-CABLE acceptance, use the same physical microphone, render endpoint, room geometry, loudspeaker level, exact VB-CABLE pair and application routing for the complete run. Consume the selected `CABLE Output` through Windows Recorder and at least one target meeting application. Keep all recordings under ignored local paths. The historical results below retain their original `MiniAEC Microphone` route.
 
 1. Far-end only: play speech through the selected render endpoint with no near-end speech; assess residual echo and convergence.
 2. Near-end only: keep render silent and speak near the microphone; assess voice preservation and ensure the bounded silent-reference behavior is accounted for.
 3. Double-talk: play far-end speech while speaking near the microphone; assess near-end preservation as well as far-end removal.
 4. Render silence and recovery: interrupt and restore the reference within the bounded recovery window; confirm `Degraded` and recovery rather than bypass.
-5. Failure and lifecycle: execute the approved stop/start, input restart, AEC reconstruction, sender-contention, and sink-failure cases; confirm every gap, reset, discard, underrun, overflow, rejected write, or terminal failure is explained by metadata.
+5. Failure and lifecycle: execute the approved stop/start, source invalidation, VB-CABLE endpoint invalidation and AEC reconstruction cases; confirm every gap, reset, conversion, discard, underrun, overflow, rejected write, or terminal failure is explained by metadata and no raw/default fallback occurs.
 
 Do not compare different algorithms or settings with different acoustic input recordings. Any future algorithm change requires old/new processing of identical inputs and separate evidence for far-end removal, convergence, double-talk voice preservation, runtime, and failure behavior.
 

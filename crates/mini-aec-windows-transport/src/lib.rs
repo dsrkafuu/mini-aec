@@ -298,10 +298,10 @@ fn encode_frame(session_id: SessionId, frame: PcmFrame<'_>) -> [u8; WRITE_REQUES
     36,
     u32::try_from(FRAME_BYTES).expect("frame payload size fits u32"),
   );
-  for (destination, sample) in bytes[WRITE_HEADER_SIZE..]
-    .chunks_exact_mut(size_of::<i16>())
-    .zip(frame.samples())
-  {
+  let (sample_bytes, remainder) =
+    bytes[WRITE_HEADER_SIZE..].as_chunks_mut::<{ size_of::<i16>() }>();
+  debug_assert!(remainder.is_empty());
+  for (destination, sample) in sample_bytes.iter_mut().zip(frame.samples()) {
     destination.copy_from_slice(&sample.to_le_bytes());
   }
   bytes

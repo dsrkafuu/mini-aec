@@ -508,8 +508,10 @@ fn write_packet(
       track_writer.writer.write_sample(0.0_f32)?;
     }
   } else {
-    for bytes in bytes.chunks_exact(size_of::<f32>()) {
-      let sample = f32::from_le_bytes(bytes.try_into().expect("f32 chunk has four bytes"));
+    let (samples, remainder) = bytes.as_chunks::<{ size_of::<f32>() }>();
+    debug_assert!(remainder.is_empty());
+    for bytes in samples {
+      let sample = f32::from_le_bytes(*bytes);
       track_writer.writer.write_sample(sample)?;
     }
   }

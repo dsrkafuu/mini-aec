@@ -1,0 +1,9 @@
+[package]
+name = "mini-aec-output"
+description = "Project-owned bounded audio output contract for MiniAEC"
+edition.workspace = true
+license.workspace = true
+version.workspace = true
+
+[lints]
+workspace = true

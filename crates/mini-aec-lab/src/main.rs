@@ -28,7 +28,7 @@ enum Command {
   Capture(CaptureArgs),
   /// Align a diagnostic run by QPC timestamp and process it through WebRTC AEC3.
   Aec(AecArgs),
-  /// Bypass one explicit physical microphone into `MiniAEC Microphone` in real time.
+  /// Bypass one explicit physical microphone through CABLE Input to CABLE Output.
   Bypass(BypassArgs),
   /// Run default WebRTC M131 AEC in real time with exact physical endpoint IDs.
   RealtimeAec(RealtimeAecArgs),
@@ -76,12 +76,20 @@ struct BypassArgs {
   #[arg(long)]
   microphone_id: String,
 
+  /// Exact VB-CABLE playback endpoint ID conventionally displayed as CABLE Input.
+  #[arg(long)]
+  cable_input_id: String,
+
+  /// Exact paired VB-CABLE recording endpoint ID conventionally displayed as CABLE Output.
+  #[arg(long)]
+  cable_output_id: String,
+
   /// Run duration in seconds.
   #[arg(long)]
   duration: u64,
 
   /// Parent directory for metadata-only validation runs.
-  #[arg(long, default_value = "driver/windows/out/validation/engine")]
+  #[arg(long, default_value = "artifacts/vb-cable/bypass")]
   output: PathBuf,
 }
 
@@ -95,22 +103,30 @@ struct RealtimeAecArgs {
   #[arg(long)]
   render_id: String,
 
+  /// Exact VB-CABLE playback endpoint ID conventionally displayed as CABLE Input.
+  #[arg(long)]
+  cable_input_id: String,
+
+  /// Exact paired VB-CABLE recording endpoint ID conventionally displayed as CABLE Output.
+  #[arg(long)]
+  cable_output_id: String,
+
   /// Run duration in seconds.
   #[arg(long)]
   duration: u64,
 
   /// Parent directory for metadata-only validation runs.
-  #[arg(long, default_value = "driver/windows/out/validation/engine-aec")]
+  #[arg(long, default_value = "artifacts/vb-cable/aec")]
   output: PathBuf,
 }
 
 #[derive(Debug, Args)]
 struct StabilityReportArgs {
-  /// Metadata-only engine.jsonl below artifacts/ or driver/windows/out/.
+  /// Metadata-only engine.jsonl below artifacts/ or the historical driver/windows/out/ root.
   #[arg(long)]
   events: PathBuf,
 
-  /// Optional report path below artifacts/ or driver/windows/out/.
+  /// Optional report path below artifacts/. Historical input is never modified.
   #[arg(long)]
   output: Option<PathBuf>,
 
@@ -143,12 +159,16 @@ fn main() -> Result<()> {
       duration: Duration::from_secs(args.duration),
       output_root: args.output,
       microphone_endpoint_id: args.microphone_id,
+      cable_input_endpoint_id: args.cable_input_id,
+      cable_output_endpoint_id: args.cable_output_id,
     }),
     Command::RealtimeAec(args) => platform::realtime_aec(platform::RealtimeAecConfig {
       duration: Duration::from_secs(args.duration),
       output_root: args.output,
       microphone_endpoint_id: args.microphone_id,
       render_endpoint_id: args.render_id,
+      cable_input_endpoint_id: args.cable_input_id,
+      cable_output_endpoint_id: args.cable_output_id,
     }),
     Command::StabilityReport(args) => {
       let output = stability::create_report(&stability::StabilityReportConfig {
@@ -212,6 +232,10 @@ mod tests {
         "bypass",
         "--microphone-id",
         "physical-id",
+        "--cable-input-id",
+        "cable-input-id",
+        "--cable-output-id",
+        "cable-output-id",
         "--duration",
         "300"
       ])
@@ -241,6 +265,10 @@ mod tests {
         "mic",
         "--render-id",
         "render",
+        "--cable-input-id",
+        "cable-input-id",
+        "--cable-output-id",
+        "cable-output-id",
         "--duration",
         "30"
       ])
@@ -255,6 +283,10 @@ mod tests {
       "mic",
       "--render-id",
       "render",
+      "--cable-input-id",
+      "cable-input-id",
+      "--cable-output-id",
+      "cable-output-id",
       "--duration",
       "30",
       "--stream-delay-ms",
