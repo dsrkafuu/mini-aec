@@ -12,7 +12,7 @@ use config::ConfigStore;
 use mini_aec_engine::{EngineSnapshot, EngineState};
 use tauri::menu::{CheckMenuItem, IsMenuItem, Menu, MenuItem, PredefinedMenuItem, Submenu};
 use tauri::tray::TrayIconBuilder;
-use tauri::{Manager, Runtime};
+use tauri::{image::Image, Manager, Runtime};
 
 const STATUS_MENU_ID: &str = "status";
 const ENABLE_AEC_MENU_ID: &str = "enable-aec3";
@@ -90,13 +90,12 @@ fn main() {
         &cable_pairs,
       );
 
-      let mut tray = TrayIconBuilder::with_id("main")
+      let tray_icon = Image::from_bytes(include_bytes!("../icons/tray-icon.png"))?;
+      let tray = TrayIconBuilder::with_id("main")
         .menu(&menu)
         .show_menu_on_left_click(false)
+        .icon(tray_icon)
         .tooltip("MiniAEC");
-      if let Some(icon) = app.default_window_icon() {
-        tray = tray.icon(icon.clone());
-      }
 
       let menu_controller = controller.clone();
       let menu_status = status.clone();

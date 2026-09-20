@@ -9,7 +9,7 @@ See `proposal.md` for motivation. 当前 Tauri 配置已经启用 Windows NSIS b
 **Goals:**
 
 - 以现有 Tauri Windows bundle 为基础生成可识别版本和架构的 release 包。
-- 让应用、托盘和安装包入口使用同一套 `speakerphone` 图标资产。
+- 让应用、托盘和安装包入口使用同一套 `speakerphone` 视觉资产，并统一为黑色前景。
 - 让包内容、来源版本、SHA-256 和签名状态可以在不安装驱动的情况下复核。
 - 保持 VB-CABLE 由用户外部获取和管理，发布包只说明前置条件和产品音频路径。
 - 让双语 README 成为面向 GitHub 访客的产品入口，而不是内部技术手册。
@@ -35,7 +35,7 @@ See `proposal.md` for motivation. 当前 Tauri 配置已经启用 Windows NSIS b
 
 ### 图标转换和引用
 
-`assets/speakerphone.svg` 是唯一设计源，保留其 speakerphone 线稿几何，不在实现中重新绘制另一个图标。由于 Windows 可执行文件、托盘和 NSIS 入口需要栅格/ICO 资源，构建前将源 SVG 转换为 Windows 所需的多尺寸图标资源，并让 Tauri 配置、应用资源和托盘默认图标引用同一套生成结果。转换应使用固定的高对比前景和透明背景，避免 `currentColor` 在不同工具中得到不可见或不一致的结果。
+`assets/speakerphone.svg` 是唯一设计源，保留其 speakerphone 线稿几何，不在实现中重新绘制另一个图标。由于 Windows 可执行文件、托盘和 NSIS 入口需要栅格/ICO 资源，构建前将源 SVG 固定渲染为黑色前景、透明背景的应用 ICO，并额外生成裁剪留白的高分辨率托盘 PNG。Tauri 应用和 NSIS 入口使用 ICO，托盘显式使用专用 PNG；两者仍可追溯到同一份 SVG 视觉资产，避免托盘使用应用 ICO 后缩放过小或模糊。
 
 ### 发布边界和 VB-CABLE 说明
 

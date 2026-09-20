@@ -3,6 +3,7 @@ logs/
 *.log
 /target
 artifacts/
+/dist/
 .tools/*
 !.tools/build-webrtc.cmd
 !.tools/cargo-webrtc.cmd
