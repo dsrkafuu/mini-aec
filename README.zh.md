@@ -11,7 +11,7 @@ MiniAEC 只做 AEC，不做降噪、自动增益、均衡、去混响或语音�
 ## 当前状态
 
 - 产品代码是 Rust + 无窗口 Tauri 2 托盘，支持 headless CLI；没有 WebView 或设置前端。
-- 实时路径需要物理麦克风、物理 render endpoint 以及精确的 VB-CABLE `CABLE Input`/`CABLE Output` ID，不跟随 Windows 默认设备。
+- 实时路径使用物理麦克风、物理 render endpoint 以及精确的 VB-CABLE `CABLE Input`/`CABLE Output` ID；首次启动会把 Windows 默认输入/输出作为明确的 `Default (...)` 菜单项解析为精确 ID，不做未展示的静默回退。
 - AEC 基线为 `webrtc-audio-processing 2.1.0`、FreeDesktop WebRTC M131 和上游 AEC3 默认配置。
 - 旧 SysVAD/生产驱动路线已退出当前产品，不参与构建和发布。
 - 当前默认 AEC 的双讲仍有一定近端吞音，这是已知质量限制，不在本次路线中调参。
@@ -38,7 +38,17 @@ artifacts/                    被 Git 忽略的私有证据，不得隐式删除
 
 ## 托盘运行
 
-设置精确 endpoint ID 后运行：
+首次使用时直接启动托盘，不设置环境变量：
+
+```powershell
+.tools\cargo-webrtc.cmd run -p mini-aec
+```
+
+托盘菜单固定为 `Status: <STATE>`、`Enable AEC3`、`Input Microphone`、`Output Reference`、`VB-CABLE Pairs` 和 `Quit MiniAEC`。首次启动会选择 `Default (...)` 系统输入、`Default (...)` 系统输出和第一个有效 VB-CABLE pair，默认关闭 AEC3 并自动运行 bypass；AEC3 需要物理 render，bypass 只需要物理麦克风和 VB-CABLE pair。选择器和 AEC3 开关修改后会自动停止旧 run、校验、保存并应用新 run，不提供手动保存、刷新、启动、停止或重启菜单项。
+
+配置会以版本化 JSON 保存到当前 Windows 用户的 Tauri 应用配置目录，保存模式、精确 endpoint ID 以及物理输入/输出的 Default/direct 选择意图，不包含 PCM、会议内容或 VB-CABLE 授权信息。选择 `Default (...)` 后重启会重新解析当前系统默认设备；直接选择设备则保持固定 endpoint。设备重装或失效时保持停止并报告原因，不按友好名称回退。
+
+开发或诊断时也可以用完整的四变量组临时覆盖持久化配置：
 
 ```powershell
 $env:MINI_AEC_MICROPHONE_ID = "<physical-capture-endpoint-id>"
@@ -48,7 +58,7 @@ $env:MINI_AEC_CABLE_OUTPUT_ID = "<cable-recording-endpoint-id>"
 cargo run -p mini-aec
 ```
 
-托盘只负责低频控制和状态，不处理 PCM。环境变量是开发配置，不是设备自动跟随或设置持久化。
+环境变量必须完整提供，优先于用户配置，只在当前进程生效且不会写回托盘配置；部分提供或为空会直接报告配置错误。托盘只负责低频控制和状态，不处理 PCM。状态只使用 `ONLINE`、`STARTING`、`STOPPING`、`DEGRADED`、`ERROR` 和 `OFFLINE` 等大写枚举；候选缺失时相关菜单置灰且不启动音频 run。
 
 ## 诊断和实时验证
 

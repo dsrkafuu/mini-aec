@@ -85,6 +85,19 @@ pub fn enumerate_capture_endpoints() -> Result<Vec<SourceDescriptor>, SourceErro
     .collect()
 }
 
+/// Resolves the active Windows default capture endpoint to its exact identity.
+///
+/// The default is exposed as a user-visible choice by the tray, so callers must retain the
+/// returned endpoint ID and continue to validate it like any other explicit selection.
+///
+/// # Errors
+///
+/// Returns a project-owned error if COM, endpoint enumeration, or endpoint metadata resolution
+/// fails.
+pub fn enumerate_default_capture_endpoint() -> Result<SourceDescriptor, SourceError> {
+  enumerate_default_endpoint(Direction::Capture, InputRole::Microphone)
+}
+
 /// Enumerates active Windows render endpoints with exact IDs and native-format metadata.
 ///
 /// # Errors
@@ -109,6 +122,36 @@ pub fn enumerate_render_endpoints() -> Result<Vec<SourceDescriptor>, SourceError
       describe_device(&device, InputRole::RenderLoopback)
     })
     .collect()
+}
+
+/// Resolves the active Windows default render endpoint to its exact identity.
+///
+/// The descriptor is used for render-loopback capture, not as a VB-CABLE or microphone endpoint.
+///
+/// # Errors
+///
+/// Returns a project-owned error if COM, endpoint enumeration, or endpoint metadata resolution
+/// fails.
+pub fn enumerate_default_render_endpoint() -> Result<SourceDescriptor, SourceError> {
+  enumerate_default_endpoint(Direction::Render, InputRole::RenderLoopback)
+}
+
+fn enumerate_default_endpoint(
+  direction: Direction,
+  role: InputRole,
+) -> Result<SourceDescriptor, SourceError> {
+  initialize_mta().ok().map_err(|error| {
+    SourceError::new(
+      SourceErrorKind::CaptureFailure,
+      format!("failed to initialize COM for default endpoint resolution: {error}"),
+    )
+  })?;
+  let enumerator =
+    DeviceEnumerator::new().map_err(|error| map_wasapi("create the device enumerator", error))?;
+  let device = enumerator
+    .get_default_device(&direction)
+    .map_err(|error| map_wasapi("resolve the Windows default endpoint", error))?;
+  describe_device(&device, role)
 }
 
 struct WindowsAudioInput {

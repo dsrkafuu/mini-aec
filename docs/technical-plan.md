@@ -18,7 +18,7 @@ MiniAEC 只做声学回声消除。降噪、自动增益、均衡、去混响和
 
 ## 2. 组件边界
 
-- `src-tauri/`：无窗口托盘，只负责生命周期、低频控制和状态展示。
+- `src-tauri/`：无窗口托盘，负责用户配置、角色分组设备候选、自动生命周期控制和低频状态展示。
 - `crates/mini-aec-engine/`：独立于 Tauri 的双输入实时引擎、同步、AEC 调用、输出边界和故障状态。
 - `crates/mini-aec-output/`：平台无关的输出 session 合同。
 - `crates/mini-aec-windows-output/`：VB-CABLE endpoint 校验、格式转换和 WASAPI render。
@@ -27,23 +27,25 @@ MiniAEC 只做声学回声消除。降噪、自动增益、均衡、去混响和
 
 项目级边界不暴露 WASAPI、Tauri、VB-CABLE 或 WebRTC 类型。`EchoCanceller` 保持可替换，WebRTC 类型只在 adapter 内部出现。
 
+托盘配置使用当前 Windows 用户范围的版本化 JSON，保存模式、精确 endpoint ID 和物理输入/输出的 Default/direct 选择意图。候选菜单只展示友好名称和必要元数据，实际选择始终使用 endpoint ID。前两个选择器的第一个选项是当前 Windows 默认输入/输出解析出的明确 endpoint ID，选择该项后重启会重新解析当前默认；普通候选则固定到所选 endpoint。VB-CABLE 选择器默认第一个有效 pair。完整的 `MINI_AEC_MICROPHONE_ID`、`MINI_AEC_RENDER_ID`、`MINI_AEC_CABLE_INPUT_ID`、`MINI_AEC_CABLE_OUTPUT_ID` 组作为临时开发覆盖，优先于持久化配置但不写回；缺少任一变量时直接失败。
+
 ## 3. 音频合同
 
 - 内部格式为 48 kHz、mono、有限的 `f32` 样本，样本范围限制在 `[-1.0, 1.0]`。
 - 每帧 10 ms，即 480 个采样；输入包跨帧时保持顺序，不提交不完整帧。
-- 物理麦克风和物理播放回环必须使用精确 endpoint ID；名称只用于诊断，不跟随 Windows 默认设备。
+- 物理麦克风和物理播放回环必须使用精确 endpoint ID；菜单中的 `Default (...)` 是明确解析当前默认 ID 并持久化跟随意图的用户选择，普通设备项则持久化固定 ID，名称不作为身份。
 - 输出适配器接受完整 10 ms 帧，在 `CABLE Input` 的实际 mix format 边界完成确定性的声道和采样格式转换。
 - 实时线程使用有界队列和有限等待，不执行文件 I/O、控制台 I/O 或 UI runtime 等待。
 
 ## 4. 实时处理和生命周期
 
-1. 打开并校验物理麦克风、物理 render loopback 和 VB-CABLE pair。
+1. 托盘启动时解析默认候选或恢复已保存的精确 endpoint ID，自动校验物理麦克风、物理 render loopback 和 VB-CABLE pair。
 2. 将两路输入归一化到共同 QPC 时间线；render frame 先于 capture frame 交给 AEC。
 3. 检查非有限输出，必要时输出新静音并在有界策略内重建 AEC。
 4. 将处理后的完整帧交给 `CABLE Input` 的 event-driven shared-mode WASAPI render。
-5. `Stopped`、`Starting`、`RunningAec`、`RunningBypass`、`Degraded`、`Stopping` 和 `Failed` 状态只通过显式控制改变。
+5. `Stopped`、`Starting`、`RunningAec`、`RunningBypass`、`Degraded`、`Stopping` 和 `Failed` 状态由托盘自动 apply 生命周期控制；配置或 AEC3 开关变更先停止旧 run，再校验并创建新 session。
 
-物理端点失效、VB-CABLE pair 缺失或歧义、输出初始化/写入失败、持续同步失败或 AEC 恢复失败都会终止当前 run，清空部分帧、队列、转换和处理结果，进入 `Failed`。后续必须显式 restart，并创建新的 run、同步、AEC 和输出 session；不得回退到默认设备、扬声器、原始麦克风或其他线缆。
+物理端点失效、VB-CABLE pair 缺失或歧义、输出初始化/写入失败、持续同步失败或 AEC 恢复失败都会终止当前 run，清空部分帧、队列、转换和处理结果，进入 `Failed`。设备候选发生变化或用户修改选择后，托盘才会重新校验并创建新的 run、同步、AEC 和输出 session；不得回退到未明确展示的默认设备、扬声器、原始麦克风或其他线缆。
 
 显式 bypass 是用户选择的独立模式，不是 AEC 故障时的隐式回退。bypass 不创建 AEC，仍然必须使用精确的物理麦克风和 VB-CABLE pair。
 

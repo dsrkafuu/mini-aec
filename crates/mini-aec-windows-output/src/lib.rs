@@ -47,6 +47,74 @@ pub fn resolve_vb_cable_pair(
   resolve_pair(&inventory, playback_id, recording_id)
 }
 
+/// Enumerates active VB-CABLE playback/recording pairs using exact endpoint identities.
+///
+/// The returned inventory is deliberately limited to pairs whose endpoint metadata contains the
+/// corroborating `VB-Audio` adapter-family marker. Friendly names are retained for presentation,
+/// but are never used to select or pair endpoints.
+///
+/// # Errors
+/// Returns an actionable enumeration or endpoint-metadata error.
+pub fn enumerate_vb_cable_pairs() -> Result<Vec<OutputPair>, OutputError> {
+  initialize_mta().ok().map_err(|error| {
+    OutputError::new(
+      OutputErrorKind::RenderFailure,
+      format!("failed to initialize COM for VB-CABLE inventory: {error}"),
+    )
+  })?;
+  let enumerator =
+    DeviceEnumerator::new().map_err(|error| output_error("create the device enumerator", error))?;
+  let playback =
+    enumerate_output_endpoints(&enumerator, Direction::Render, EndpointRole::Playback)?;
+  let recording =
+    enumerate_output_endpoints(&enumerator, Direction::Capture, EndpointRole::Recording)?;
+  let mut pairs = Vec::new();
+  for playback_endpoint in playback {
+    if !is_vb_audio_family(&playback_endpoint.device_family) {
+      continue;
+    }
+    for recording_endpoint in &recording {
+      if !is_vb_audio_family(&recording_endpoint.device_family)
+        || !playback_endpoint
+          .device_family
+          .eq_ignore_ascii_case(&recording_endpoint.device_family)
+      {
+        continue;
+      }
+      let inventory = [playback_endpoint.clone(), recording_endpoint.clone()];
+      if let Ok(pair) = resolve_pair(
+        &inventory,
+        &playback_endpoint.endpoint_id,
+        &recording_endpoint.endpoint_id,
+      ) {
+        pairs.push(pair);
+      }
+    }
+  }
+  Ok(pairs)
+}
+
+fn enumerate_output_endpoints(
+  enumerator: &DeviceEnumerator,
+  direction: Direction,
+  role: EndpointRole,
+) -> Result<Vec<OutputEndpointDescriptor>, OutputError> {
+  let collection = enumerator
+    .get_device_collection(&direction)
+    .map_err(|error| output_error("enumerate VB-CABLE endpoints", error))?;
+  collection
+    .into_iter()
+    .map(|device| {
+      let device = device.map_err(|error| output_error("access a VB-CABLE endpoint", error))?;
+      describe_device(&device, role)
+    })
+    .collect()
+}
+
+fn is_vb_audio_family(family: &str) -> bool {
+  family.to_ascii_lowercase().contains("vb-audio")
+}
+
 fn describe_exact(
   enumerator: &DeviceEnumerator,
   direction: Direction,
