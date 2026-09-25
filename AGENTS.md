@@ -67,8 +67,9 @@
 
 ## 检查命令
 
-- 格式：`cargo fmt --all -- --check`
-- 测试：`.tools\cargo-webrtc.cmd test --workspace`
-- Lint：`.tools\cargo-webrtc.cmd clippy --workspace --all-targets -- -D warnings`
-- Windows 构建需要 x64 Visual Studio C++、Meson、Ninja 和 libclang，详见 `README.md`。
+- Rust、Meson、Ninja 通过用户的 mise 环境提供；Visual Studio Build Tools 提供 x64 C++ 工具链和 LLVM/Clang（含 libclang）。仓库脚本初始化 VS 并设置 `LIBCLANG_PATH`。
+- 格式：`mise exec -- cargo fmt --all -- --check`
+- 测试：`mise exec -- .tools\cargo-webrtc.cmd test --workspace`
+- Lint：`mise exec -- .tools\cargo-webrtc.cmd clippy --workspace --all-targets -- -D warnings`
+- 构建：`mise exec -- .tools\cargo-webrtc.cmd build --release`；详见 `docs/windows-release.md`。
 - 项目没有前端检查。

@@ -52,4 +52,4 @@ MiniAEC 不捆绑、下载、安装、更新、移除、授权或改名 VB-CABLE
 
 ## 开发
 
-仓库是 Rust workspace，包含无窗口的 Tauri 2 托盘宿主。构建、验证和固定的原生依赖说明见 [Windows 发布与开发说明](docs/windows-release.md)。
+仓库是 Rust workspace，包含无窗口的 Tauri 2 托盘宿主。在 Windows 11 x64 上，通过 mise 提供 Rust、Meson 和 Ninja，并准备含 C++ 桌面开发工具、LLVM/Clang 的 Visual Studio Build Tools。在仓库根目录运行 `mise exec -- .\.tools\cargo-webrtc.cmd build --release`；其他检查见 [Windows 发布与开发说明](docs/windows-release.md)。

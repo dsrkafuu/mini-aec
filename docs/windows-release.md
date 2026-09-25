@@ -8,13 +8,13 @@ MiniAEC 的目标平台是 Windows 11 x64。仓库中的 VB-CABLE 安装包只�
 
 ## 本地构建
 
-先按仓库根目录 `AGENTS.md` 阅读固定的 Rust、Meson、Ninja 和 libclang 要求，然后执行：
+通过个人 mise 配置提供 Rust（Windows x64 MSVC）、Meson 和 Ninja；Visual Studio Build Tools 需包含 C++ 桌面开发工具和 LLVM/Clang（含 x64 libclang）。仓库的 `.tools\cargo-webrtc.cmd` 会初始化 VS 环境并设置 `LIBCLANG_PATH`。在仓库根目录执行：
 
 ```powershell
-cargo fmt --all -- --check
-.tools\cargo-webrtc.cmd test --workspace
-.tools\cargo-webrtc.cmd clippy --workspace --all-targets -- -D warnings
-.tools\cargo-webrtc.cmd build --release
+mise exec -- cargo fmt --all -- --check
+mise exec -- .\.tools\cargo-webrtc.cmd test --workspace
+mise exec -- .\.tools\cargo-webrtc.cmd clippy --workspace --all-targets -- -D warnings
+mise exec -- .\.tools\cargo-webrtc.cmd build --release
 ```
 
 图标唯一设计源是 `assets/speakerphone.svg`。生成 Windows ICO 资源：

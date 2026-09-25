@@ -52,4 +52,4 @@ Detailed WASAPI, endpoint identity, diagnostic, toolchain, and validation rules 
 
 ## Development
 
-The repository is a Rust workspace with a windowless Tauri 2 tray host. Build and validation commands, including the pinned native dependencies, are documented in [Windows release and development notes](docs/windows-release.md).
+The repository is a Rust workspace with a windowless Tauri 2 tray host. Build on Windows 11 x64 with Rust, Meson, and Ninja from mise, plus Visual Studio Build Tools with C++ desktop tools and LLVM/Clang. From the repository root, run `mise exec -- .\.tools\cargo-webrtc.cmd build --release`. See [Windows release and development notes](docs/windows-release.md) for other checks.
